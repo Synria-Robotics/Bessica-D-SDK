@@ -198,7 +198,7 @@ class ArmController:
     
     from typing import Optional, List, Union
 
-    def read_joint_angles(self, arm: str = None) -> Optional[Union[List[float], List[List[float]]]]:
+    def read_joint_angles(self, arm: str = 'both') -> Optional[Union[List[float], List[List[float]]]]:
         """
         读取机械臂的关节角度（单位：弧度）
 
@@ -209,26 +209,26 @@ class ArmController:
         Returns:
             Optional[Union[List[float], List[List[float]]]]:
                 - 若指定 arm，则返回一个长度为 7 的一维列表：shape = (7,)
-                - 若 arm 为 None，则返回一个包含两个一维列表的二维列表：shape = (2, 7)，
+                - 若 arm 为 both，则返回一个包含两个一维列表的二维列表：shape = (2, 7)，
                 结构为 [left_arm_angles, right_arm_angles]
                 - 若读取失败，则返回 None。
         """
         joint_states = self.data_parser.get_joint_state(arm=arm)
 
-        if arm == None:
+        if arm == 'both':
             return [joint_states['left_arm'].angles ,
                     joint_states['right_arm'].angles]
         else:
             return joint_states[arm].angles
 
 
-    def read_gripper_data(self, arm: str = None) -> Union[float, Tuple[float, float]]:
+    def read_gripper_data(self, arm: str = 'both') -> Union[float, Tuple[float, float]]:
         """
         读取机械臂夹爪的当前角度（单位：弧度）
 
         Args:
             arm (str, optional): 指定要读取的机械臂，可选值为 "left_arm" 或 "right_arm"。
-                                若为 None，则同时返回左右两个机械臂的夹爪角度。
+                                若为 both，则同时返回左右两个机械臂的夹爪角度。
 
         Returns:
             Union[float, Tuple[float, float]]:
@@ -237,7 +237,7 @@ class ArmController:
         """
         joint_states = self.data_parser.get_joint_state(arm)
 
-        if arm is None:
+        if arm == 'both':
             return (joint_states['left_arm'].gripper,
                     joint_states['right_arm'].gripper)
             
@@ -246,13 +246,13 @@ class ArmController:
 
     
     
-    def read_joint_state(self, arm: str = None) -> Optional[Union[JointState, JointStateDict]]:
+    def read_joint_state(self, arm: str = 'both') -> Optional[Union[JointState, JointStateDict]]:
         """
         读取机械臂的完整状态信息（关节角度、夹爪、按钮等）。
 
         Args:
             arm (str, optional): 指定要读取的机械臂。可选值为 "left_arm" 或 "right_arm"。
-                                若为 None，则返回左右两个机械臂的完整状态字典。
+                                若为 both，则返回左右两个机械臂的完整状态字典。
 
         Returns:
             Optional[Union[JointState, JointStateDict]]:
@@ -265,7 +265,7 @@ class ArmController:
 
     def set_joint_angles(self,
                         joint_angles: Union[List[float], List[List[float]]],
-                        arm: str = None,
+                        arm: str = 'both',
                         gripper_angle: Union[float, Tuple[float, float], List[float]] = None,
                         wait_for_completion: bool = True,
                         timeout: float = 5.0,
@@ -291,7 +291,7 @@ class ArmController:
             bool: 是否发送和完成成功
         """
 
-        if arm is None:
+        if arm == 'both':
             # ----------- 双臂模式 -----------
             if (not isinstance(joint_angles, list) or len(joint_angles) != 2 or
                     not all(isinstance(sublist, list) and len(sublist) == self.joint_count for sublist in joint_angles)):
@@ -364,7 +364,7 @@ class ArmController:
     
     def set_gripper(self, 
                     angle_rad: Union[float, Tuple[float,float]], 
-                    arm: str=None,
+                    arm: str= 'both',
                     wait_for_completion: bool = True, 
                     timeout: float = 5.0, 
                     tolerance: float = 0.1) -> bool:
@@ -386,7 +386,7 @@ class ArmController:
             bool: 命令是否成功发送和执行
         """
         # 校验输入
-        if arm is None:
+        if arm == 'both':
             if not isinstance(angle_rad, (tuple, list)) or len(angle_rad) != 2:
                 logger.error("双臂模式下 angle_rad 应为 (left, right)")
                 return False
@@ -407,7 +407,7 @@ class ArmController:
         # === 等待运动完成 ===
         start_time = time.time()
 
-        if arm is None:
+        if arm == 'both':
             target_left, target_right = angle_rad
             if self.debug_mode:
                 logger.debug(f"等待双夹爪运动到目标: 左夹爪={round(target_left * self.RAD_TO_DEG, 2)}°, 右夹爪={round(target_right * self.RAD_TO_DEG, 2)}°")
@@ -486,7 +486,7 @@ class ArmController:
     
     def _build_joint_frame(self, 
                        joint_angles: Union[List[float], List[List[float]]],
-                       arm: str = None) -> List[int]:
+                       arm: str = 'both') -> List[int]:
         """
         构建关节控制帧（支持单臂或双臂）
 
@@ -494,7 +494,7 @@ class ArmController:
             joint_angles: 
                 - 若 arm 为 None，则应为 [[left_arm], [right_arm]]
                 - 否则应为 1 个包含 7 个关节角度的列表
-            arm: 指定控制的手臂，"left_arm"、"right_arm"，或 None（表示双臂）
+            arm: 指定控制的手臂，"left_arm"、"right_arm"，或 both（表示双臂）
 
         Returns:
             List[int]: 控制帧字节列表
@@ -516,7 +516,7 @@ class ArmController:
         
 
         # === 提取双臂角度数据 ===
-        if arm is None:
+        if arm == 'both':
             left_angles, right_angles = joint_angles
 
         else:
@@ -556,7 +556,7 @@ class ArmController:
     
     def _build_gripper_frame(self, 
                          angle_rad: Union[float, Tuple[float, float]],
-                         arm: str = None) -> List[int]:
+                         arm: str = 'both') -> List[int]:
         """
         构建夹爪控制帧（通过 joint_frame 中的夹爪位直接写入）
 
@@ -581,7 +581,7 @@ class ArmController:
         frame = self._build_joint_frame(joint_angles=[left_angles, right_angles])
 
         # 获取目标夹爪硬件值
-        if arm is None:
+        if arm == 'both':
             gripper_value_left = self._rad_to_hardware_value_grip(angle_rad[0])
             gripper_value_right = self._rad_to_hardware_value_grip(angle_rad[1])
 
@@ -611,7 +611,7 @@ class ArmController:
 
         # 日志打印
         if self.debug_mode:
-            if arm is None:
+            if arm == 'both':
                 logger.debug(f"发送双夹爪角度: 左={round(angle_rad[0]*self.RAD_TO_DEG, 2)}°, 右={round(angle_rad[1]*self.RAD_TO_DEG, 2)}°")
             else:
                 logger.debug(f"发送{arm}夹爪角度: {round(angle_rad * self.RAD_TO_DEG, 2)}°")

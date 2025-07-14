@@ -10,16 +10,27 @@ import os
 import sys
 import time
 import math
+import argparse
 
 # 添加项目根目录到Python路径
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from bessica_d_sdk.controller import ArmController
 
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="读取机械臂状态数据")
+    parser.add_argument('--arm', type=str, choices=['left_arm', 'right_arm', 'both'], default='both',
+                        help="选择要读取的机械臂：left_arm、right_arm 或 both（默认）")
+    return parser.parse_args()
+
 def main():
     """主函数"""
-    print("=== 机械臂数据读取示例 ===")
+    args = parse_args()
+    selected_arm = args.arm
     
+    print(f"=== 机械臂数据读取示例（当前读取：{selected_arm}） ===")
+
     # 创建控制器实例 (可选参数: port="/dev/ttyUSB0", debug_mode=True) 
     controller = ArmController(debug_mode=False)
     
@@ -33,43 +44,25 @@ def main():
         print("按 Ctrl+C 退出")
         print("-" * 50)
 
-        q = [2.16, 3.14, 3.14, 3.14, 3.14, 3.14]
-
-
-
-        pos, quat, rpy =controller.forward_kinematics_bessica_d(q)
-        print(f"正向运动学结果: 位置: {pos}, 四元数: {quat}, 偏航角: {rpy} (弧度)")
-
-            
+                
         # 持续读取数据
         while True:
+
             # 读取完整状态
-
-            #start_time = time.time()
             state = controller.read_joint_state()
-            #print("读取完成",time.time()-start_time)
-            # 转换为度数显示
-
-            joint_angles_deg = [round(angle * controller.RAD_TO_DEG, 2) for angle in state.angles]
-            gripper_angle_deg = round(state.gripper * controller.RAD_TO_DEG, 2)
-            pos, quat, rpy=controller.forward_kinematics_bessica_d(state.angles)
-
-            solved_ik_angles = controller.inverse_kinematics_bessica_d(pos,
-                                                    quat,
-                                                    state.angles)
-
-            print(controller._thread_running)
-            # 打印状态信息
-            print(f"关节角度(度): {joint_angles_deg}  ")
-            print(f"末端位置: {pos}  ")
-            print(f"逆解关节角度(度): {[round(angle * controller.RAD_TO_DEG, 2) for angle in solved_ik_angles]}  ")
-            #print(f"末端四元数: {quat}  ")
             
-            print(f"夹爪角度(度): {gripper_angle_deg}  ")
-            print(f"按钮状态: {state.button1} {state.button2} ")
-            
+            arms_to_read = ['left_arm', 'right_arm'] if selected_arm == 'both' else [selected_arm]
 
-            # 短暂延时
+            # 转换并打印每个机械臂的数据
+            for arm_name in arms_to_read:
+                joint_state = state[arm_name]
+                joint_state = state[arm_name]
+                joint_angles_deg = [round(a * controller.RAD_TO_DEG, 2) for a in joint_state.angles]
+                gripper_deg = round(joint_state.gripper * controller.RAD_TO_DEG, 2)
+
+                print(f"【{arm_name}】关节角度(度): {joint_angles_deg}, 夹爪角度: {gripper_deg}°\n")
+
+            print(f"状态更新线程运行中: {controller._thread_running}")
             time.sleep(0.05)
             
     except KeyboardInterrupt:
@@ -80,4 +73,7 @@ def main():
         print("已断开连接")
 
 if __name__ == "__main__":
+    # python read_angles.py --arm left_arm
+    # python read_angles.py --arm right_arm
+    # python read_angles.py --arm both
     main()

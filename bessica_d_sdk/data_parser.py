@@ -96,7 +96,7 @@ class DataParser:
                 logger.debug(f"未处理的指令ID: 0x{cmd_id:02X}")
             return None
     
-    def get_joint_state(self, arm: str = None) -> JointState:
+    def get_joint_state(self, arm: str = 'both') -> Optional[Union[JointState,JointStateDict]]:
         """
         获取关节状态和夹爪状态
 
@@ -109,7 +109,7 @@ class DataParser:
         """
         if arm in ['left_arm', 'right_arm']:
             return self._joint_states[arm]
-        elif arm is None:
+        elif arm == 'both':
             return self._joint_states
         else:
             logger.error("机械臂名字输入错误，请输入'left_arm' 或 'right_arm'")

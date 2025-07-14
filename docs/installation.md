@@ -1,6 +1,6 @@
 # 安装指南
 
-本指南将引导您完成 Alicia Duo SDK 的安装和配置过程。
+本指南将引导您完成 Bessica-D-SDK 的安装和配置过程。
 
 ## 先决条件
 
@@ -26,7 +26,6 @@
     安装库以及依赖：
     ```bash
     pip install -r requirements.txt
-
     pip install -e .
     ```
 

@@ -9,7 +9,8 @@
 import os
 import sys
 import time
-from typing import List
+from typing import List, Union
+import argparse
 
 
 # 添加项目根目录到Python路径
@@ -17,37 +18,80 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from bessica_d_sdk.controller import ArmController
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="机械臂运动控制演示")
+    parser.add_argument('--arm', type=str, choices=['left_arm', 'right_arm', 'both'], default='left_arm',
+                        help='选择要控制的机械臂（left_arm, right_arm, both）')
+    return parser.parse_args()
 
-def control_move(controller, current_angles: List[float], 
-              target_angles: List[float], steps: int = 120, delay: float = 0.03) -> None:
+def control_move(controller, current_angles: Union[List[float],List[List[float]]], 
+              target_angles: Union[List[float],List[List[float]]], arm: str='left_arm',
+              steps: int = 120, delay: float = 0.03) -> None:
         
-        """缓慢移动到目标角度
+        """
+        缓慢插值移动机械臂到目标角度（支持单臂或双臂）
+
         Args:
-            controller (ArmController): 机械臂控制器实例
-            current_angles (list): 当前关节角度列表
-            target_angles (list): 目标关节角度列表
-            steps (int): 插值步数
-            delay (float): 每步延迟时间（秒）
-        逐步插值移动到目标角度，模拟缓慢运动。     
+            current_angles: 
+                - 单臂：长度为 7 的角度列表（单位：弧度）
+                - 双臂：包含两个 7 维列表的二维结构 [[left], [right]]
+            target_angles:
+                - 同上，表示目标位置
+            arm: 
+                - 'left_arm' 或 'right_arm' 表示单臂控制
+                - 'both' 表示双臂控制
+            steps: 插值步数（越多越平滑）
+            delay: 每步的延迟时间（单位：秒）
         """
 
-        if len(current_angles) != len(target_angles):
-            raise ValueError(f"错误: 当前角度数量是：{len(current_angles)} 与目标角度数量：{len(target_angles)} 数量不匹配")
+        if arm == 'both':
+
+            for joint_angles in [current_angles, target_angles]:
+                if (not isinstance(joint_angles, list) or len(joint_angles) != 2 or
+                        not all(isinstance(sublist, list) and len(sublist) == 7 for sublist in joint_angles)):
+                    print("双臂模式下，joint_angles 必须是形如 [[left_arm], [right_arm]] 的二维列表，每个包含 7 个关节角度")
+                    return False    
                 
-        for step in range(1, steps + 1):
-            interp_angles = [
-                current + (target - current) * step / steps
-                for current, target in zip(current_angles, target_angles)
-            ]
-            result = controller.set_joint_angles(interp_angles, wait_for_completion=False)
-            if not result:
+            for step in range(1, steps + 1):
+                interp_angles = [
+                    [  # 左臂插值
+                        current + (target - current) * step / steps
+                        for current, target in zip(current_angles[0], target_angles[0])
+                    ],
+                    [  # 右臂插值
+                        current + (target - current) * step / steps
+                        for current, target in zip(current_angles[1], target_angles[1])
+                    ]
+                ]
+                result = controller.set_joint_angles(interp_angles, arm='both', wait_for_completion=False)
+                if not result:
+                    return False
+
+                time.sleep(delay)
+
+        elif arm in ['left_arm', 'right_arm']:
+            if not isinstance(joint_angles, list) or len(joint_angles) != 7:
+                print(f"{arm}：关节角度数量必须为7")
                 return False
             
-            time.sleep(delay)
+            for step in range(1, steps + 1):
+                interp_angles = [ current + (target - current) * step / steps
+                        for current, target in zip(current_angles, target_angles)]
+                
+                result = controller.set_joint_angles(interp_angles, arm=arm, wait_for_completion=False)
+                if not result:
+                    return False
 
+                time.sleep(delay)
+
+def single_arm_demo(arm: str='left_arm'):
+    return 0
 
 def main():
     """主函数"""
+    args = parse_args()
+    selected_arm = args.arm
+
     print("=== 机械臂运动控制示例 ===")
     
     # 创建控制器实例
@@ -62,55 +106,75 @@ def main():
         print("连接成功")
         
         # 初始化夹爪位置
-        print("初始化夹爪位置...")
-        controller.set_gripper(0 * controller.DEG_TO_RAD, wait_for_completion=True)
+        if selected_arm == 'both':
+            print("初始化夹爪位置...")
+            controller.set_gripper(angle_rad=[0 * controller.DEG_TO_RAD]*2, arm=selected_arm, wait_for_completion=True)
+        elif selected_arm in ['left_arm', 'right_arm']:
+            print("初始化夹爪位置...")
+            controller.set_gripper(angle_rad=0 * controller.DEG_TO_RAD, arm=selected_arm, wait_for_completion=True)
         
         # 读取初始位置
-        initial_state = controller.read_joint_state()
-        initial_angles = [round(angle * controller.RAD_TO_DEG, 2) for angle in initial_state.angles]
-        print(f"初始关节角度(度): {initial_angles}")
+        initial_angles = controller.read_joint_angles(arm='both')
+        initial_angles_left = [round(angle * controller.RAD_TO_DEG, 2) for angle in initial_angles[0]]
+        initial_angles_right = [round(angle * controller.RAD_TO_DEG, 2) for angle in initial_angles[1]]
+        print(f"左臂关节角度(度): {initial_angles_left}")
+        print(f"右臂关节角度(度): {initial_angles_right}")
+
         
         # 1. 演示关节控制 - 移动到零位置
-        print("\n将所有关节移动到零位置...")
-        zero_angles = [0.0] * 6 # 6个关节角度都设为0
-        result = control_move(controller, initial_state.angles, zero_angles)
+        print("\n将双臂关节移动到零位置...")
+        zero_angles = [[[0.0] * 7]*2] # 双臂七个关节设为0
+        result = control_move(controller, 
+                              arm='both',
+                              current_angles=initial_angles, 
+                              target_angles=zero_angles)
+        
         print(f"移动到零位置结果: {result}")
         
         # 读取当前位置
-        current_state = controller.read_joint_state()
-        current_angles = [round(angle * controller.RAD_TO_DEG, 2) for angle in current_state.angles]
-        print(f"当前关节角度(度): {current_angles}")
+        current_angles = controller.read_joint_angles(arm='both')
+        current_angles_left = [round(angle * controller.RAD_TO_DEG, 2) for angle in current_angles[0]]
+        current_angles_right = [round(angle * controller.RAD_TO_DEG, 2) for angle in current_angles[1]]
+        print(f"左臂关节角度(度): {current_angles_left}")
+        print(f"右臂关节角度(度): {current_angles_right}")
         
         # 2. 演示逐个关节移动
         print("\n演示逐个关节移动...")
-        for i in range(6):
+        
+        for i in range(7):
             # 移动当前关节到30度
-            test_angles = [0.0] * 6
-            test_angles[i] = 15 * controller.DEG_TO_RAD
+            test_angles = [[[0.0] * 7]*2]
+            test_angles[0][i] = 15 * controller.DEG_TO_RAD
+            test_angles[1][i] = 15 * controller.DEG_TO_RAD
             
             print(f"移动关节{i+1}到30度...")
-            control_move(controller, current_state.angles, test_angles)
+            control_move(controller,
+                         current_angles=[current_angles_left,current_angles_right],
+                         target_angles=test_angles)
             
             # 移动回零位置
             print(f"移动关节{i+1}回零位置...")
-            control_move(controller, test_angles, zero_angles)
+            control_move(controller, 
+                         current_angles=test_angles, 
+                         target_angles=zero_angles)
         
         # 演示夹爪控制
         print("\n演示夹爪控制...")
         print("打开夹爪...")
-        controller.set_gripper(100 * controller.DEG_TO_RAD, wait_for_completion=True)
-        
+        controller.set_gripper(angle_rad=[100 * controller.DEG_TO_RAD]*2, arm='both', wait_for_completion=True)
         print("关闭夹爪...")
-        controller.set_gripper(0 * controller.DEG_TO_RAD, wait_for_completion=True)
+        controller.set_gripper(angle_rad=[0 * controller.DEG_TO_RAD]*2, arm='both', wait_for_completion=True)
         
-        # 读取当前位置
-        current_state = controller.read_joint_state()
-        current_angles = [round(angle * controller.RAD_TO_DEG, 2) for angle in current_state.angles]
-        print(f"当前关节角度(度): {current_angles}")
-        
+        # 读取双臂当前位置
+        current_angles = controller.read_joint_angles(arm='both')
+        current_angles_left = [round(angle * controller.RAD_TO_DEG, 2) for angle in current_angles[0]]
+        current_angles_right = [round(angle * controller.RAD_TO_DEG, 2) for angle in current_angles[1]]
+        print(f"左臂关节角度(度): {current_angles_left}")
+        print(f"右臂关节角度(度): {current_angles_right}")
+
         # 回到零位置
         print("\n回到零位置...")
-        control_move(controller, current_state.angles, zero_angles)
+        control_move(controller, current_angles=current_angles, target_angles=zero_angles)
         print("\n演示完成!")
         
     except KeyboardInterrupt:
