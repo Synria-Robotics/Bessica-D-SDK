@@ -96,17 +96,23 @@ class DataParser:
                 logger.debug(f"未处理的指令ID: 0x{cmd_id:02X}")
             return None
     
-    def get_joint_state(self, arm: str = "left_arm") -> JointState:
+    def get_joint_state(self, arm: str = None) -> JointState:
         """
         获取关节状态和夹爪状态
 
         Args:
+            默认发送双臂的数据
             arm(str): 'left_arm' 或 'right_arm'
         
         Returns:
             JointState: 指定机械臂当前关节状态
         """
-        return self._joint_states[arm]
+        if arm in ['left_arm', 'right_arm']:
+            return self._joint_states[arm]
+        elif arm is None:
+            return self._joint_states
+        else:
+            logger.error("机械臂名字输入错误，请输入'left_arm' 或 'right_arm'")
     
     def _parse_joint_data(self, frame: List[int]) -> Dict:
         """
@@ -395,44 +401,45 @@ class DataParser:
         """
         return " ".join([f"{b:02X}" for b in data])
     
-def main():
-    data = DataParser(debug_mode=True)
-    frame = [
-    0xAA,       # 帧头
-    0x06,       # 指令ID
-    44,         # 数据长度
-    # --- 右臂11个舵机 (22字节) ---
-    0x00, 0x08,  # 舵机1 = 2048
-    0x10, 0x08,  # 舵机2 = 2064
-    0x20, 0x08,
-    0x30, 0x08,
-    0x40, 0x08,
-    0x50, 0x08,
-    0x60, 0x08,
-    0x70, 0x08,
-    0x80, 0x08,
-    0x90, 0x08,
-    0xA0, 0x08,
-    # --- 左臂11个舵机 (22字节) ---
-    0x00, 0x08,
-    0x10, 0x08,
-    0x20, 0x08,
-    0x30, 0x08,
-    0x40, 0x08,
-    0x50, 0x08,
-    0x60, 0x08,
-    0x70, 0x08,
-    0x80, 0x08,
-    0x90, 0x08,
-    0xA0, 0x08]
-    # 计算校验位（从第3位开始直到倒数第2位前）
-    checksum = sum(frame[3:]) % 2
-    frame.append(checksum)  # 校验位
-    frame.append(0xFF)      # 帧尾
+# def main():
+#     data = DataParser(debug_mode=True)
+#     frame = [
+#     0xAA,       # 帧头
+#     0x06,       # 指令ID
+#     44,         # 数据长度
+#     # --- 右臂11个舵机 (22字节) ---
+#     0x00, 0x08,  # 舵机1 = 2048
+#     0x10, 0x08,  # 舵机2 = 2064
+#     0x20, 0x08,
+#     0x30, 0x08,
+#     0x40, 0x08,
+#     0x50, 0x08,
+#     0x60, 0x08,
+#     0x70, 0x08,
+#     0x80, 0x08,
+#     0x90, 0x08,
+#     0xA0, 0x08,
+#     # --- 左臂11个舵机 (22字节) ---
+#     0x00, 0x08,
+#     0x10, 0x08,
+#     0x20, 0x08,
+#     0x30, 0x08,
+#     0x40, 0x08,
+#     0x50, 0x08,
+#     0x60, 0x08,
+#     0x70, 0x08,
+#     0x80, 0x08,
+#     0x90, 0x08,
+#     0xA0, 0x08]
+#     # 计算校验位（从第3位开始直到倒数第2位前）
+#     checksum = sum(frame[3:]) % 2
+#     frame.append(checksum)  # 校验位
+#     frame.append(0xFF)      # 帧尾
 
-    a= data._parse_joint_data(frame=frame)
-    print(a)
+#     a= data._parse_joint_data(frame=frame)
+#     a = (data._joint_states['left_arm'].gripper)
+#     print(a)
    
 
-if __name__ == "__main__":
-    main() 
+# if __name__ == "__main__":
+#     main() 
