@@ -1,5 +1,5 @@
 """
-Bessica-D SDK
+Bessica-D-SDK
 ==============
 
 此包提供了与 Bessica-D 灵越双臂交互的工具。
