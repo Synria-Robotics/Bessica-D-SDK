@@ -31,6 +31,11 @@ class ArmController:
     # CMD_JOINT = 0x04       # 机械臂角度反馈与控制
     CMD_DUAL_ARM = 0x06   # 四机械臂角度反馈与控制
     CMD_TORQUE = 0x13      # 机械臂力矩控制
+
+    # 位置和速度识别帧
+    PRESENT_POSITION = 0x38 #当前机械臂关节角度识别帧
+    PRESENT_SPEED = 0x41    #当前机械臂关节速度识别帧
+
     
     def __init__(self, port: str = "", baudrate: int = 921600, debug_mode: bool = False):
         """
@@ -257,7 +262,7 @@ class ArmController:
         Returns:
             Optional[Union[JointState, JointStateDict]]:
                 - 如果指定 arm，则返回对应机械臂的 JointState。
-                - 如果 arm 为 None，则返回包含左右机械臂的 JointStateDict：
+                - 如果 arm 为 both，则返回包含左右机械臂的 JointStateDict：
                 {"left_arm": JointState, "right_arm": JointState}
                 - 若状态尚未可用，则返回 None。
         """
