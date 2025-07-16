@@ -52,7 +52,7 @@ class ArmController:
         self.data_parser = DataParser(debug_mode=debug_mode)
         
         # 舵机数量
-        self.servo_count = 11
+        self.servo_count = 10
         self.joint_count = 7
         
         # 舵机映射表：关节索引->舵机索引
@@ -69,7 +69,6 @@ class ArmController:
             (4, 1.0),    # 关节5 -> 舵机8 (正向)
             (5, 1.0),    # 关节6 -> 舵机9 (正向)
             (6, 1.0),    # 关节7 -> 舵机10 (正向)
-            (7, 1.0),    # 夹爪   -> 舵机11 (正向)
         ]
         
         # 状态更新线程相关

@@ -26,15 +26,22 @@ class DataParser:
     RAD_TO_DEG = 180.0 / math.pi  # 弧度转角度系数
     
     # 指令ID
+    CMD_GRIPPER = 0x02      # 夹爪控制与行程反馈
     CMD_ZERO_POS = 0x03    # 机械臂以当前位置为零点  
     # CMD_JOINT = 0x04       # 机械臂角度反馈与控制
     CMD_DUAL_ARM = 0x06   # 四机械臂角度反馈与控制
     CMD_TORQUE = 0x13      # 机械臂力矩控制
     CMD_ERROR = 0xEE       # 错误反馈
 
-    # 位置和速度识别帧
+    # 数据长度
+    JOINT_DATA_SIZE = 22      #位置速度识别字节 + 左右臂识别字节 + 单臂10个舵机共20个字节共22字节
+    GRIPPER_DATA_SIZE = 7
+
+    # 识别帧
     PRESENT_POSITION = 0x38 #当前机械臂关节角度识别帧
     PRESENT_SPEED = 0x41    #当前机械臂关节速度识别帧
+    LEFT_ARM = 0X66
+    RIGHT_ARM = 0X77
     
     def __init__(self, debug_mode: bool = False):
         """
@@ -45,14 +52,13 @@ class DataParser:
         """
         self.debug_mode = debug_mode
         
-        # 存储最新数据    
-        self._joint_states: JointStateDict = {"left_arm": JointState([0.0]*7, 0.0, 0.0),
-                                              "right_arm": JointState([0.0]*7, 0.0, 0.0)}
-        
-        # self._button1 = False           # 按钮1状态
-        # self._button2 = False           # 按钮2状态
-
-        self._last_update_time = 0.0    # 最后更新时间
+        # 存储最新数据   
+        self._joint_angles_left = None
+        self._joint_angles_right = None
+        self._gripper_angle_left = None
+        self._gripper_angle_right = None
+        self._last_update_time_left = None
+        self._last_update_time_right = None         
         
         logger.info("初始化数据解析模块")
         if debug_mode:
@@ -93,6 +99,8 @@ class DataParser:
         # 根据指令ID解析数据
         if cmd_id == self.CMD_DUAL_ARM:
             return self._parse_joint_data(frame)
+        elif cmd_id == self.CMD_GRIPPER:
+            return self._parse_gripper_data(frame)
         elif cmd_id == self.CMD_ERROR:
             return self._parse_error_data(frame)
         else:
@@ -111,10 +119,12 @@ class DataParser:
         Returns:
             JointState: 指定机械臂当前关节状态
         """
+        joint_states: JointStateDict = {"left_arm": JointState(self._joint_angles_left, self._gripper_angle_left, self._last_update_time_left),
+                                         "right_arm": JointState(self._joint_angles_right, self._gripper_angle_right, self._last_update_time_right)}   
         if arm in ['left_arm', 'right_arm']:
-            return self._joint_states[arm]
+            return joint_states[arm]
         elif arm == 'both':
-            return self._joint_states
+            return joint_states
         else:
             logger.error("机械臂名字输入错误，请输入'left_arm' 或 'right_arm'")
     
@@ -129,7 +139,7 @@ class DataParser:
             Dict: 解析结果
         """
         # 检查数据长度
-        if frame[2] != 44:  # 0x2C对应十进制44 (每个臂11个舵机 * 2字节， 双臂一共44个字节)
+        if frame[2] != self.JOINT_DATA_SIZE:  # 
             logger.warning(f"关节数据长度错误: {frame[2]}")
             return None
         
@@ -145,60 +155,67 @@ class DataParser:
             7: (4, 1.0),    # 舵机8 -> 关节5  (正向)
             8: (5, 1.0),    # 舵机9 -> 关节6  （正向）
             9: (6, 1.0),    # 舵机10 -> 关节7 （正向）
-            10: (7, 1,0)    # 舵机11 -> 夹爪  （正向）
-            
         }
 
-        self._last_update_time = time.time()
+         # 初始化关节和夹爪角度数组 
+        joint_values = [0.0] * 7
+        servo_values = []
 
-        for arm, start_idx in zip(["left_arm", "right_arm"], [3,25]):
+        start_idx = 5
         
-            # 初始化关节和夹爪角度数组 
-            joint_values = [0.0] * 7
-            servo_values = []
-            
-            # 处理前10个舵机机械臂关节数据
-            for i in range(10):
-                # 数据索引计算
-                byte_idx = start_idx + i * 2
-                if byte_idx + 1 >= len(frame):
-                    logger.warning(f"舵机数据越界: 索引{byte_idx}超出范围")
-                    continue
-                
-                # 解析舵机原始值
-                low_byte = frame[byte_idx]
-                high_byte = frame[byte_idx + 1]
-                servo_value = (low_byte & 0xFF) | ((high_byte & 0xFF) << 8)
-                servo_values.append(servo_value)
-                
-                # 映射到关节
-                mapping = servo_to_joint_map.get(i)
-                if mapping is not None:
-                    joint_idx, direction = mapping
-                    # 转换为弧度并应用方向系数
-                    angle_rad = self._value_to_radians(servo_value) * direction
-                    joint_values[joint_idx] = angle_rad
+        # 检查是左臂还是右臂
+        if frame[start_idx - 1] == self.LEFT_ARM:
+            arm = 'left_arm'
 
-            # 处理夹爪数据
-            gripper_raw = frame[start_idx + 10] | (frame[start_idx + 11])
-
-             # 范围检查
-            if gripper_raw < 2048 or gripper_raw > 2900:
-                gripper_raw = max(2048, min(gripper_raw, 2900))
-            
-            # 转换为角度 (0-100度)
-            servo_to_angle_ratio = (2900-2048)/100
-            angle_deg = (gripper_raw - 2048) / servo_to_angle_ratio
-            
-            # 转换为弧度
-            gripper_rad = angle_deg * self.DEG_TO_RAD
-
-            self._joint_states[arm] = JointState(angles=joint_values,
-                                                gripper=gripper_rad,
-                                                timestamp=self._last_update_time)
-
+        elif frame[start_idx - 1] == self.RIGHT_ARM:
+            arm = 'right_arm'
         
+        else:
+            logger.error("未能检测到左右臂识别帧")
+            return None
         
+        # 处理前10个舵机机械臂关节数据
+        for i in range(10):
+            # 数据索引计算
+            byte_idx = start_idx + i * 2
+            if byte_idx + 1 >= len(frame):
+                logger.warning(f"舵机数据越界: 索引{byte_idx}超出范围")
+                continue
+            
+            # 解析舵机原始值
+            low_byte = frame[byte_idx]
+            high_byte = frame[byte_idx + 1]
+            servo_value = (low_byte & 0xFF) | ((high_byte & 0xFF) << 8)
+            servo_values.append(servo_value)
+            
+            # 映射到关节
+            mapping = servo_to_joint_map.get(i)
+            if mapping is not None:
+                joint_idx, direction = mapping
+                # 转换为弧度并应用方向系数
+                angle_rad = self._value_to_radians(servo_value) * direction
+                joint_values[joint_idx] = angle_rad
+
+            # # 处理夹爪数据
+            # gripper_raw = frame[start_idx + 10] | (frame[start_idx + 11])
+
+            #  # 范围检查
+            # if gripper_raw < 2048 or gripper_raw > 2900:
+            #     gripper_raw = max(2048, min(gripper_raw, 2900))
+            
+            # # 转换为角度 (0-100度)
+            # servo_to_angle_ratio = (2900-2048)/100
+            # angle_deg = (gripper_raw - 2048) / servo_to_angle_ratio
+            
+            # # 转换为弧度
+            # gripper_rad = angle_deg * self.DEG_TO_RAD
+            if arm == 'left_arm':
+                self._joint_angles_left = joint_values
+                self._last_update_time_left = time.time() 
+            elif arm == 'right_arm':
+                self._joint_angles_right = joint_values
+                self._last_update_time_right = time.time() 
+
         if self.debug_mode:
             degrees = [round(rad * self.RAD_TO_DEG, 2) for rad in self._joint_states[arm].angles]
             if arm == 'left_arm':
@@ -211,10 +228,61 @@ class DataParser:
         
         return {
         "type": "dual_arm_joint_data",
-        "timestamp": self._last_update_time,
-        "left_arm": self._joint_states["left_arm"],
-        "right_arm": self._joint_states["right_arm"]
+        "timestamp_left": self._last_update_time_left,
+        "timestamp_right": self._last_update_time_right,
+        "left_arm": self._joint_angles_left,
+        "right_arm": self._joint_angles_right
     }
+
+    def _parse_gripper_data(self, frame: List[int]) -> Dict:
+        """
+        解析夹爪数据帧 (0x02)
+        
+        Args:
+            frame: 完整的数据帧
+            
+        Returns:
+            Dict: 解析结果
+        """
+
+        # 检查最小长度
+        if len(frame[2]) < self.GRIPPER_DATA_SIZE:
+            logger.warning("夹爪数据帧长度不足")
+            return None
+        
+        start_idx = 3
+        for offset, arm in enumerate(['left_arm', 'right_arm']):
+            gripper_raw = frame[start_idx + offset*2] | (frame[start_idx + offset*2 + 1] << 8)
+
+            # 范围检查
+            if gripper_raw < 2048 or gripper_raw > 2900:
+                gripper_raw = max(2048, min(gripper_raw, 2900))
+
+            # 转换为角度 (0-100度)
+            angle_deg = (gripper_raw - 2048) / 8.52
+        
+            # 转换为弧度
+            gripper_rad = angle_deg * self.DEG_TO_RAD
+        
+            # 更新存储的数据
+            if arm == 'left_arm':
+                self._gripper_angle_left = gripper_rad
+                self._last_update_time_left = time.time()
+            elif arm == 'right_arm':
+                self._gripper_angle_right = gripper_rad
+                self._last_update_time_right = time.time()
+
+        
+            if self.debug_mode:
+                logger.debug(f"夹爪原始值: {gripper_raw}, 角度: {angle_deg:.2f}度, 弧度: {gripper_rad:.4f}")
+    
+        return {
+            "type": "gripper_data",
+            "gripper_angle_left": self._gripper_angle_left,
+            "gripper_angle_right": self._gripper_angle_right,
+            "timestamp_left": self._last_update_time_left, 
+            "timestamp_right": self._last_update_time_right
+        }
 
     def _value_to_radians(self, value: int) -> float:
         """
