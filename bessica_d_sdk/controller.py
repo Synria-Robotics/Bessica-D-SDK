@@ -3,7 +3,7 @@ import time
 import logging
 import threading
 from typing import List, Optional, Union, Tuple, Dict
-import PyKDL
+# import PyKDL
 import numpy as np
 
 from .serial_comm import SerialComm
@@ -21,6 +21,7 @@ class ArmController:
     
     RAD_TO_DEG = 180.0 / math.pi  # 弧度转角度系数
     DEG_TO_RAD = math.pi / 180.0  # 角度转弧度系数
+
     # 帧常量
     FRAME_HEADER = 0xAA
     FRAME_FOOTER = 0xFF
@@ -172,7 +173,7 @@ class ArmController:
     
     def _update_loop(self):
         """状态更新线程主循环"""
-        update_interval = 0.01  # 更新间隔，单位：秒
+        update_interval = 0.02  # 更新间隔，单位：秒
         error_count = 0
         max_consecutive_errors = 10
         
@@ -224,7 +225,7 @@ class ArmController:
             return [joint_states['left_arm'].angles ,
                     joint_states['right_arm'].angles]
         else:
-            return joint_states[arm].angles
+            return joint_states.angles
 
 
     def read_gripper_data(self, arm: str = 'both') -> Union[float, Tuple[float, float]]:
@@ -305,7 +306,6 @@ class ArmController:
 
             # 发送双臂的控制帧
             frame_dual = self._build_joint_frame(joint_angles=joint_angles)
-            print(frame_dual)
             result_dual = self.serial_comm.send_data(frame_dual)
 
             # 发送夹爪角度（如果有）
@@ -355,7 +355,7 @@ class ArmController:
                 logger.info(f"等待 {arm} 到达目标位置")
                 start_time = time.time()
                 while time.time() - start_time < timeout:
-                    angles_now = self.data_parser.get_joint_state(arm)[arm].angles
+                    angles_now = self.data_parser.get_joint_state(arm).angles
                     if all(abs(angles_now[i] - joint_angles[i]) <= tolerance for i in range(self.joint_count)):
                         break
                     time.sleep(0.02)
@@ -402,6 +402,7 @@ class ArmController:
             
         # 构造夹爪控制帧
         frame = self._build_gripper_frame(angle_rad, arm=arm)
+        print(frame)
         
         # 发送夹爪控制命令
         result = self.serial_comm.send_data(frame)
@@ -440,7 +441,7 @@ class ArmController:
                 logger.debug(f"等待 {arm} 夹爪运动到目标位置: {round(angle_rad * self.RAD_TO_DEG, 2)}°")
 
             while time.time() - start_time < timeout:
-                gripper_now = self.data_parser.get_joint_state(arm)[arm].gripper
+                gripper_now = self.data_parser.get_joint_state(arm).gripper
                 if abs(gripper_now - angle_rad) <= tolerance:
                     if self.debug_mode:
                         logger.debug(f"{arm} 夹爪已到达目标位置")
@@ -584,7 +585,7 @@ class ArmController:
 
         # 构建 joint_frame（默认用当前夹爪角度）
         frame = self._build_joint_frame(joint_angles=[left_angles, right_angles])
-
+        print(f"original frame: {frame}")
         # 获取目标夹爪硬件值
         if arm == 'both':
             gripper_value_left = self._rad_to_hardware_value_grip(angle_rad[0])
@@ -717,9 +718,9 @@ class ArmController:
         Returns:
             int: 校验和
         """
-        # 计算从第3个字节到倒数第3个字节的所有元素之和
+        # 计算从第4个字节到倒数第3个字节的所有元素之和
         checksum = 0
-        for i in range(3, len(frame) - 2):
+        for i in range(4, len(frame) - 2):
             checksum += frame[i]
         
         # 对2取模

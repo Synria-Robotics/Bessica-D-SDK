@@ -30,7 +30,7 @@ def get_version():
     return "0.1.0" # 默认版本
 
 setup(
-    name='Bessica-D-SDk',
+    name='bessica_d_sdk',
     version=get_version(),
     author='Xuanya Robotics', 
     author_email='tech@xuanyatech.com', 

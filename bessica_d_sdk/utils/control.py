@@ -50,7 +50,7 @@ def move_to_zero(controller: ArmController, arm: str = "both", interpolate: bool
     if interpolate:
         return control_move(controller, current, target, arm=arm)
     else:
-        return controller.set_joint_angles(joint_angles=target, arm=arm, wait_for_completion=True)
+        return controller.set_joint_angles(joint_angles=target, arm=arm, wait_for_completion=False)
 
 
 def move_joint(controller: ArmController, joint_id: int, angle_deg: float, arm: str = "left_arm", interpolate: bool = True) -> bool:
@@ -73,7 +73,7 @@ def move_joint(controller: ArmController, joint_id: int, angle_deg: float, arm: 
     if interpolate:
         return control_move(controller, current, target, arm=arm)
     else:
-        return controller.set_joint_angles(joint_angles=target, arm=arm, wait_for_completion=True)
+        return controller.set_joint_angles(joint_angles=target, arm=arm, wait_for_completion=False)
 
 def move_all_joints(controller: ArmController, angles_deg: List[float], arm: str = "left_arm", interpolate: bool = True) -> bool:
     """
@@ -157,9 +157,9 @@ def set_dual_gripper(controller: ArmController, left_deg: float, right_deg: floa
     return controller.set_gripper(angles_rad, arm="both", wait_for_completion=wait)
 
 
-def open_gripper(controller: ArmController, angle_deg: float = 100.0, arm: str = "both", wait: bool = True) -> bool:
+def open_gripper(controller: ArmController, angle_deg: float = 0.0, arm: str = "both", wait: bool = True) -> bool:
     """
-    打开夹爪（默认 100°）
+    打开夹爪（默认 0°）
 
     Args:
         angle_deg: 打开角度（单臂）或最大开度（双臂）
@@ -180,7 +180,7 @@ def close_gripper(controller: ArmController, arm: str = "both", wait: bool = Tru
         arm: 控制哪个臂或 "both"
         wait: 是否等待完成
     """
-    return open_gripper(controller, angle_deg=0.0, arm=arm, wait=wait)
+    return open_gripper(controller, angle_deg=100.0, arm=arm, wait=wait)
 
 
 def print_joint_angles(controller: ArmController, arm: str = "both"):

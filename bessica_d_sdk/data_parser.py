@@ -24,15 +24,20 @@ class DataParser:
     # 常量定义
     DEG_TO_RAD = math.pi / 180.0  # 角度转弧度系数
     RAD_TO_DEG = 180.0 / math.pi  # 弧度转角度系数
+    DATA_START_IDX = 4
     
+    # 帧常量
+    FRAME_HEADER = 0xAA
+    FRAME_FOOTER = 0xFF
+
     # 指令ID
     CMD_ZERO_POS = 0x03    # 机械臂以当前位置为零点  
     # CMD_JOINT = 0x04       # 机械臂角度反馈与控制
-    CMD_DUAL_ARM = 0x06   # 四机械臂角度反馈与控制
+    CMD_DUAL_ARM = 0x05   # 四机械臂角度反馈与控制
     CMD_TORQUE = 0x13      # 机械臂力矩控制
     CMD_ERROR = 0xEE       # 错误反馈
 
-    # 位置和速度识别帧
+    # 数据类型
     PRESENT_POSITION = 0x38 #当前机械臂关节角度识别帧
     PRESENT_SPEED = 0x41    #当前机械臂关节速度识别帧
     
@@ -69,7 +74,7 @@ class DataParser:
             Dict: 解析结果，如果解析失败则返回None
         """
         # 基本帧格式检查
-        if len(frame) < 5 or frame[0] != 0xAA or frame[-1] != 0xFF:
+        if len(frame) < 6 or frame[0] != self.FRAME_HEADER or frame[-1] != self.FRAME_FOOTER:
             if self.debug_mode:
                 logger.warning(f"无效数据帧: {self._bytes_to_hex(frame)}")
             return None
@@ -77,6 +82,7 @@ class DataParser:
         # 解析指令ID和数据长度
         cmd_id = frame[1]
         data_len = frame[2]
+    
         
         # 验证数据长度
         if len(frame) != data_len + 5:  # 帧头(1) + 指令ID(1) + 长度(1) + 数据(n) + 校验(1) + 帧尾(1)
@@ -128,8 +134,11 @@ class DataParser:
         Returns:
             Dict: 解析结果
         """
+        if frame[3] != self.PRESENT_POSITION:
+            logger.warning(f"关节数据类型错误: {frame[3]}")
+            return None
         # 检查数据长度
-        if frame[2] != 44:  # 0x2C对应十进制44 (每个臂11个舵机 * 2字节， 双臂一共44个字节)
+        if frame[2] != 45:  
             logger.warning(f"关节数据长度错误: {frame[2]}")
             return None
         
@@ -151,7 +160,7 @@ class DataParser:
 
         self._last_update_time = time.time()
 
-        for arm, start_idx in zip(["left_arm", "right_arm"], [3,25]):
+        for arm, start_idx in zip(["left_arm", "right_arm"], [4,26]):
         
             # 初始化关节和夹爪角度数组 
             joint_values = [0.0] * 7
@@ -197,7 +206,6 @@ class DataParser:
                                                 gripper=gripper_rad,
                                                 timestamp=self._last_update_time)
 
-        
         
         if self.debug_mode:
             degrees = [round(rad * self.RAD_TO_DEG, 2) for rad in self._joint_states[arm].angles]
@@ -380,12 +388,12 @@ class DataParser:
         Returns:
             bool: 校验是否通过
         """
-        if len(frame) < 4:
+        if len(frame) < 5:
             return False
         
-        # 计算从第3个字节到倒数第3个字节的所有元素之和
+        # 计算从第4个字节到倒数第3个字节的所有元素之和
         checksum = 0
-        for i in range(3, len(frame) - 2):
+        for i in range(4, len(frame) - 2):
             checksum += frame[i]
         
         checksum %= 2

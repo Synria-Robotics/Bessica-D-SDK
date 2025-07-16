@@ -42,11 +42,11 @@ Bessica-D-sdk/
     进入 `examples` 目录，尝试运行一个示例脚本，例如读取机械臂角度：
     ```sh
     cd examples
-    python3 read_angles.py
+    python3 demo_state_reading.py
     ```
     或者控制机械臂运动：
     ```sh
-    python3 arm_movement.py
+    python3 demo_dual_arm.py
     ```
 
 ## 文档

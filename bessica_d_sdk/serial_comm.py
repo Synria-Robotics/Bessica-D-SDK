@@ -218,7 +218,7 @@ class SerialComm:
             start_found = False
             
             # 设置一个安全的最大读取次数，避免无限循环
-            max_attempts = 100
+            max_attempts = 200
             attempts = 0
             
             while attempts < max_attempts:
@@ -245,7 +245,7 @@ class SerialComm:
                     # 检查是否找到帧结束标记
                     if byte_val == 0xFF and len(frame_buffer) >= 3:
                         # 检查帧长度是否符合预期
-                        if len(frame_buffer) >= 3:  # 确保有足够的数据读取长度字段
+                        if len(frame_buffer) >= 4:  # 确保有足够的数据读取长度字段
                             expected_length = frame_buffer[2] + 5  # 数据长度+5等于帧长度
                             
                             if len(frame_buffer) == expected_length:
