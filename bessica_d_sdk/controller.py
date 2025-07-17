@@ -4,6 +4,7 @@ import logging
 import threading
 from typing import List, Optional, Union, Tuple, Dict
 import numpy as np
+import traceback
 
 from .serial_comm import SerialComm
 from .data_parser import DataParser, JointState, JointStateDict
@@ -20,10 +21,12 @@ class ArmController:
     
     RAD_TO_DEG = 180.0 / math.pi  # 弧度转角度系数
     DEG_TO_RAD = math.pi / 180.0  # 角度转弧度系数
+
     # 帧常量
     FRAME_HEADER = 0xAA
     FRAME_FOOTER = 0xFF
-    
+    GRIPPER_FRAME_SIZE = 8
+
     # 指令ID
     CMD_GRIPPER = 0x02     # 夹爪控制与行程反馈
     CMD_ZERO_POS = 0x03    # 机械臂以当前位置为零点  
@@ -31,9 +34,12 @@ class ArmController:
     CMD_DUAL_ARM = 0x06   # 四机械臂角度反馈与控制
     CMD_TORQUE = 0x13      # 机械臂力矩控制
 
-    # 位置和速度识别帧
+    # 识别帧
     PRESENT_POSITION = 0x38 #当前机械臂关节角度识别帧
     PRESENT_SPEED = 0x41    #当前机械臂关节速度识别帧
+    LEFT_ARM = 0X01
+    RIGHT_ARM = 0X02
+
 
     
     def __init__(self, port: str = "", baudrate: int = 921600, debug_mode: bool = False):
@@ -55,12 +61,13 @@ class ArmController:
         self.servo_count = 10
         self.joint_count = 7
         
+        self.count = 0
         # 舵机映射表：关节索引->舵机索引
         # 机械臂的6个关节需要映射到9个舵机上
         # [关节1, 关节1(重复), 关节2, 关节2(反向), 关节3, 关节3(反向), 关节4, 关节5, 关节6]
         self.joint_to_servo_map = [
-            (0, 1.0),    # 关节1 -> 舵机1 (正向)
-            (0, 1.0),    # 关节1 -> 舵机2 (正向)
+            (0, -1.0),    # 关节1 -> 舵机1 (正向)
+            (0, -1.0),    # 关节1 -> 舵机2 (正向)
             (1, 1.0),    # 关节2 -> 舵机3 (正向)
             (1, -1.0),   # 关节2 -> 舵机4 (反向)
             (2, 1.0),    # 关节3 -> 舵机5 (正向)
@@ -73,8 +80,10 @@ class ArmController:
         
         # 状态更新线程相关
         self._update_thread = None
+        self.read_interval = 0.005
         self._stop_thread = threading.Event()
         self._thread_running = False
+        self._lock = threading.Lock()
 
         # self.chain= self.create_bessica_d_kinematic_chain()
         
@@ -170,36 +179,27 @@ class ArmController:
     
     def _update_loop(self):
         """状态更新线程主循环"""
-        update_interval = 0.01  # 更新间隔，单位：秒
-        error_count = 0
-        max_consecutive_errors = 10
-        
         logger.info("状态更新线程开始运行")
-        
         while not self._stop_thread.is_set():
-            try:
-                # 读取一帧数据
-                frame = self.serial_comm.read_frame()
-                if frame:
-                    # 解析数据帧，更新内部状态
-                    self.data_parser.parse_frame(frame)
-                    # 成功读取帧后重置错误计数
 
-                if frame == 9999999:
-                    #logger.error("检测到严重的串口通信异常，机械臂可能已断开连接")
-                    # 停止线程并清理资源
-                    #self._destroy_self("机械臂连接已丢失")
-                    break  # 确保线程退出循环
-                    
+            try:
+                with self._lock:
+                    frame = self.serial_comm.read_frame()
+                    if frame == 9999999:
+                        logger.error("串口读取异常，线程终止")
+                        break
+                    elif frame:
+                        self.data_parser.parse_frame(frame)
+                   
             except Exception as e:
-                logger.error(f"状态更新线程异常: {str(e)}")
-                
-                
+                logger.error(f"状态线程异常：{e}")
                 break
+
+
         self._thread_running = False
-        logger.info("状态更新线程已结束运行")
+        logger.info("状态更新线程结束")
+
     
-    from typing import Optional, List, Union
 
     def read_joint_angles(self, arm: str = 'both') -> Optional[Union[List[float], List[List[float]]]]:
         """
@@ -216,7 +216,7 @@ class ArmController:
                 结构为 [left_arm_angles, right_arm_angles]
                 - 若读取失败，则返回 None。
         """
-        joint_states = self.data_parser.get_joint_state(arm=arm)
+        joint_states = self.data_parser.get_joint_state()
 
         if arm == 'both':
             return [joint_states['left_arm'].angles ,
@@ -267,8 +267,8 @@ class ArmController:
         return self.data_parser.get_joint_state(arm)
 
     def set_joint_angles(self,
-                        joint_angles: Union[List[float], List[List[float]]],
-                        arm: str = 'both',
+                        joint_angles: List[float],
+                        arm: str = None,
                         gripper_angle: Union[float, Tuple[float, float], List[float]] = None,
                         wait_for_completion: bool = True,
                         timeout: float = 5.0,
@@ -278,7 +278,6 @@ class ArmController:
 
         支持：
         - 指定 arm：控制单个机械臂（传入一个 [float] 列表）
-        - 不指定 arm：默认控制双臂（传入 [[左臂角度], [右臂角度]]）
 
         Args:
             joint_angles: 单臂：长度为 7 的列表；双臂：包含两个列表的二维结构
@@ -293,57 +292,17 @@ class ArmController:
         Returns:
             bool: 是否发送和完成成功
         """
-
-        if arm == 'both':
-            # ----------- 双臂模式 -----------
-            if (not isinstance(joint_angles, list) or len(joint_angles) != 2 or
-                    not all(isinstance(sublist, list) and len(sublist) == self.joint_count for sublist in joint_angles)):
-                logger.error("双臂模式下，joint_angles 必须是形如 [[left_arm], [right_arm]] 的二维列表，每个包含 7 个关节角度")
-                return False
-
-            # 发送双臂的控制帧
-            frame_dual = self._build_joint_frame(joint_angles=joint_angles)
-            print(frame_dual)
-            result_dual = self.serial_comm.send_data(frame_dual)
-
-            # 发送夹爪角度（如果有）
-            if gripper_angle is not None:
-                if isinstance(gripper_angle, (tuple, list)) and len(gripper_angle) == 2:
-                    result_dual_gripper &= self.set_gripper(gripper_angle)
-                else:
-                    logger.warning("双臂模式下 gripper_angle 应为包含两个值的 tuple 或 list")
-                    return False
-                
-            if not result_dual:
-                logger.error("双臂命令发送失败")
-                return False
-
-            # 等待两臂到达目标位置
-            if wait_for_completion:
-                logger.info("等待双臂到达目标位置")
-                start_time = time.time()
-                while time.time() - start_time < timeout:
-                    states = self.data_parser.get_joint_state()
-                    l_ok = all(abs(states["left_arm"].angles[i] - joint_angles["left_arm"][i]) <= tolerance for i in range(self.joint_count))
-                    r_ok = all(abs(states["right_arm"].angles[i] - joint_angles["right_arm"][i]) <= tolerance for i in range(self.joint_count))
-
-                    if l_ok and r_ok:
-                        break
-                    time.sleep(0.02)
-
-                if time.time() - start_time >= timeout:
-                    logger.warning("双臂等待到位超时")
-                    return False
-
-            return True
-
+        if not arm:
+            logger.error(f"请输入想要控制的机械臂，当前arm = {arm}")
+            return False
+        
         else:
-            # ----------- 单臂模式 -----------
             if not isinstance(joint_angles, list) or len(joint_angles) != self.joint_count:
                 logger.error(f"{arm}：关节角度数量必须为 {self.joint_count}")
                 return False
 
             frame = self._build_joint_frame(joint_angles, arm=arm)
+            # print(f"长度： {len(frame)}, frame: {frame}")
             result = self.serial_comm.send_data(frame)
 
             if gripper_angle is not None:
@@ -353,7 +312,7 @@ class ArmController:
                 logger.info(f"等待 {arm} 到达目标位置")
                 start_time = time.time()
                 while time.time() - start_time < timeout:
-                    angles_now = self.data_parser.get_joint_state(arm)[arm].angles
+                    angles_now = self.data_parser.get_joint_state(arm).angles
                     if all(abs(angles_now[i] - joint_angles[i]) <= tolerance for i in range(self.joint_count)):
                         break
                     time.sleep(0.02)
@@ -435,10 +394,10 @@ class ArmController:
 
         else:
             if self.debug_mode:
-                logger.debug(f"等待 {arm} 夹爪运动到目标位置: {round(angle_rad * self.RAD_TO_DEG, 2)}°")
+                logger.info(f"等待 {arm} 夹爪运动到目标位置: {round(angle_rad * self.RAD_TO_DEG, 2)}°")
 
             while time.time() - start_time < timeout:
-                gripper_now = self.data_parser.get_joint_state(arm)[arm].gripper
+                gripper_now = self.data_parser.get_joint_state(arm).gripper
                 if abs(gripper_now - angle_rad) <= tolerance:
                     if self.debug_mode:
                         logger.debug(f"{arm} 夹爪已到达目标位置")
@@ -488,8 +447,8 @@ class ArmController:
         return self.serial_comm.send_data(frame)
     
     def _build_joint_frame(self, 
-                       joint_angles: Union[List[float], List[List[float]]],
-                       arm: str = 'both') -> List[int]:
+                       joint_angles: List[float],
+                       arm: str = None) -> List[int]:
         """
         构建关节控制帧（支持单臂或双臂）
 
@@ -504,62 +463,40 @@ class ArmController:
         """
 
         # === 准备通用帧头结构 ===
-        frame_size = 44 + 5
+        frame_size = 21 + 5 #左右臂识别字节 + 20舵机字节 + 通用字节
         frame = [0] * frame_size
         frame[0] = self.FRAME_HEADER
         frame[1] = self.CMD_DUAL_ARM
-        frame[2] = 44
+        frame[2] = 21
         frame[-1] = self.FRAME_FOOTER
-
-        joint_states = self.data_parser.get_joint_state()
-        gripper_rad = [
-                joint_states['left_arm'].gripper,
-                joint_states['right_arm'].gripper
-            ]
         
+        if arm == 'left_arm':
+            frame[3] = self.LEFT_ARM
+        elif arm == 'right_arm':
+            frame[3] = self.RIGHT_ARM
 
-        # === 提取双臂角度数据 ===
-        if arm == 'both':
-            left_angles, right_angles = joint_angles
+        offset = 4
+        for servo_idx, (joint_idx, direction) in enumerate(self.joint_to_servo_map):
+            angle_rad = joint_angles[joint_idx] * direction
+            value = self._rad_to_hardware_value(angle_rad)
 
-        else:
-            # 单臂模式：用当前另一侧角度补齐
-            if arm == 'left_arm':
-                left_angles = joint_angles
-                right_angles = joint_states['right_arm'].angles
-            elif arm == 'right_arm':
-                right_angles = joint_angles
-                left_angles = joint_states['left_arm'].angles
-
-        # === 填充舵机数据到 frame（左/右 臂） ===
-        for arm_idx, angles in enumerate([left_angles, right_angles]):
-            offset = 3 + arm_idx * 22
-            for servo_idx, (joint_idx, direction) in enumerate(self.joint_to_servo_map):
-                if joint_idx == 7:  # 夹爪
-                    angle_rad = gripper_rad[arm_idx]
-                    value = self._rad_to_hardware_value_grip(angle_rad)
-                else:
-                    angle_rad = angles[joint_idx] * direction
-                    value = self._rad_to_hardware_value(angle_rad)
-
-                frame[offset + servo_idx * 2] = value & 0xFF
-                frame[offset + servo_idx * 2 + 1] = (value >> 8) & 0xFF
+            frame[offset + servo_idx * 2] = value & 0xFF
+            frame[offset + servo_idx * 2 + 1] = (value >> 8) & 0xFF
 
         frame[-2] = self._calculate_checksum(frame)
 
         # === 日志打印 ===
         if self.debug_mode:
             logger.debug(f"发送关节角度 (度): "
-                        f"左臂: {[round(a * self.RAD_TO_DEG, 1) for a in left_angles]}, "
-                        f"右臂: {[round(a * self.RAD_TO_DEG, 1) for a in right_angles]}")
-
+                        f"{arm}关节角度: {[round(a * self.RAD_TO_DEG, 1) for a in joint_angles]}")
+        
         return frame
 
 
     
     def _build_gripper_frame(self, 
                          angle_rad: Union[float, Tuple[float, float]],
-                         arm: str = 'both') -> List[int]:
+                         arm: str = None) -> List[int]:
         """
         构建夹爪控制帧（通过 joint_frame 中的夹爪位直接写入）
 
@@ -575,50 +512,34 @@ class ArmController:
             List[int]: 控制帧字节列表
         """
 
-        # 读取当前两臂关节状态
-        joint_state = self.data_parser.get_joint_state()
-        left_angles = joint_state['left_arm'].angles
-        right_angles = joint_state['right_arm'].angles
+         # 创建夹爪控制帧 (固定长度)
+        frame = [0] * self.GRIPPER_FRAME_SIZE
+        frame[0] = self.FRAME_HEADER
+        frame[1] = self.CMD_GRIPPER
+        frame[2] = self.GRIPPER_FRAME_SIZE - 5  # 数据长度
+        frame[-1] = self.FRAME_FOOTER
 
-        # 构建 joint_frame（默认用当前夹爪角度）
-        frame = self._build_joint_frame(joint_angles=[left_angles, right_angles])
-
-        # 获取目标夹爪硬件值
-        if arm == 'both':
-            gripper_value_left = self._rad_to_hardware_value_grip(angle_rad[0])
-            gripper_value_right = self._rad_to_hardware_value_grip(angle_rad[1])
-
-        elif arm == 'left_arm':
-            gripper_value_left = self._rad_to_hardware_value_grip(angle_rad)
-            gripper_value_right = self._rad_to_hardware_value_grip(joint_state['right_arm'].gripper)
-
+        if arm == 'left_arm':
+            frame[3] = self.LEFT_ARM
+    
         elif arm == 'right_arm':
-            gripper_value_left = self._rad_to_hardware_value_grip(joint_state['left_arm'].gripper)
-            gripper_value_right = self._rad_to_hardware_value_grip(angle_rad)
-
-        else:
-            raise ValueError(f"未知 arm 参数: {arm}")
-
-        # 写入夹爪数据（servo 11 = offset+20，第11组 = 偏移 + 10*2）
-        offset_left_gripper = 3 + 10 * 2          # 左臂起始 + 10个舵机
-        offset_right_gripper = 3 + 22 + 10 * 2    # 右臂起始 + 10个舵机
-
-        frame[offset_left_gripper] = gripper_value_left & 0xFF
-        frame[offset_left_gripper + 1] = (gripper_value_left >> 8) & 0xFF
-
-        frame[offset_right_gripper] = gripper_value_right & 0xFF
-        frame[offset_right_gripper + 1] = (gripper_value_right >> 8) & 0xFF
-
-        # 更新校验位
+            frame[3] = self.RIGHT_ARM
+        
+        # 转换为硬件值
+        gripper_value = self._rad_to_hardware_value_grip(angle_rad)
+        
+        # 写入夹爪角度
+        offset = 4
+        frame[offset] = gripper_value & 0xFF  # 低字节
+        frame[offset+1] = (gripper_value >> 8) & 0xFF  # 高字节
+        
+        # 计算并设置校验和
         frame[-2] = self._calculate_checksum(frame)
-
-        # 日志打印
+        
         if self.debug_mode:
-            if arm == 'both':
-                logger.debug(f"发送双夹爪角度: 左={round(angle_rad[0]*self.RAD_TO_DEG, 2)}°, 右={round(angle_rad[1]*self.RAD_TO_DEG, 2)}°")
-            else:
-                logger.debug(f"发送{arm}夹爪角度: {round(angle_rad * self.RAD_TO_DEG, 2)}°")
-
+            angle_deg = round(angle_rad * self.RAD_TO_DEG, 2)
+            logger.debug(f"发送夹爪角度: {angle_deg}度 ({angle_rad:.4f}弧度)")
+            
         return frame
 
     
@@ -699,11 +620,11 @@ class ArmController:
             logger.warning(f"夹爪角度值超出范围: {angle_deg:.2f}度，会被截断")
             angle_deg = 100.0
         
-        # 转换公式：0度对应2048，100度对应2900
-        value = int(2048 + (angle_deg * 8.52))
+        # 转换公式：0度对应2048，100度对应3800
+        value = int(2048 + (angle_deg * (3800-2048)/100))
         
         # 范围限制
-        return max(2048, min(2900, value))
+        return max(2048, min(3800, value))
     
     def _calculate_checksum(self, frame: List[int]) -> int:
         """
