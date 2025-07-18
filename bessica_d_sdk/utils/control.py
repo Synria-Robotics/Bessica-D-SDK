@@ -7,6 +7,12 @@ import logging
 logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("Control_utils")
+import logging
+
+# 配置日志
+logging.basicConfig(level=logging.INFO, 
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("Control_utils")
 
 
 def control_move(controller: ArmController,
@@ -29,6 +35,7 @@ def control_move(controller: ArmController,
     Returns:
         bool: 控制是否成功
     """
+    
     
     if arm == "both":
         for step in range(1, steps + 1):
@@ -54,6 +61,7 @@ def control_move(controller: ArmController,
     else:
         logger.error(f"请检查arm输入指令是否正确，当前arm值为{arm}")
         return False
+    
     return True
 
 def wait_for_valid_state(controller: ArmController, arm: str, timeout: float=5.0):
@@ -69,7 +77,7 @@ def wait_for_valid_state(controller: ArmController, arm: str, timeout: float=5.0
 def move_to_zero(controller: ArmController, arm: str = None, interpolate: bool = True) -> bool:
     """
     将指定机械臂或双臂移动到零位。
-    """
+    """   
     if not arm:
         logger.error(f"请输入指定要控制的机械臂，当前指定机械臂为{arm}")
         return False
@@ -80,7 +88,6 @@ def move_to_zero(controller: ArmController, arm: str = None, interpolate: bool =
         return control_move(controller, current, target, arm=arm)
     else:
         return controller.set_joint_angles(joint_angles=target, arm=arm, wait_for_completion=True)
-
 
 def move_joint(controller: ArmController, joint_id: int, angle_deg: float, arm: str = None, interpolate: bool = True) -> bool:
     """
@@ -127,6 +134,7 @@ def move_all_joints(controller: ArmController, angles_deg: List[float], arm: str
         
     if len(angles_deg) != 7:
         logger.error("必须提供7个关节角度")
+        logger.error("必须提供7个关节角度")
         return False
 
     current = controller.read_joint_angles(arm)
@@ -153,6 +161,7 @@ def move_dual_joint(controller: ArmController, angles_left_deg: List[float], ang
         print("每个机械臂必须提供 7 个关节角度")
         return False
 
+    current = controller.read_joint_angles(arm='both')
     current = controller.read_joint_angles(arm='both')
     target = [
         [a * controller.DEG_TO_RAD for a in angles_left_deg],
@@ -195,7 +204,9 @@ def set_dual_gripper(controller: ArmController, left_deg: float, right_deg: floa
     controller.set_gripper(angles_rad[0], arm="left_arm", wait_for_completion=wait)
     time.sleep(0.05)
     controller.set_gripper(angles_rad[1], arm="right_arm", wait_for_completion=wait)
-
+    controller.set_gripper(angles_rad[0], arm="left_arm", wait_for_completion=wait)
+    time.sleep(0.05)
+    controller.set_gripper(angles_rad[1], arm="right_arm", wait_for_completion=wait)
 
 def open_gripper(controller: ArmController, angle_deg: float = 0.0, arm: str = "both", wait: bool = False) -> bool:
     """
@@ -211,7 +222,6 @@ def open_gripper(controller: ArmController, angle_deg: float = 0.0, arm: str = "
     else:
         return set_gripper_angle(controller, angle_deg, arm=arm, wait=wait)
 
-
 def close_gripper(controller: ArmController, arm: str = "both", wait: bool = False) -> bool:
     """
     关闭夹爪（设置为 0°）
@@ -220,6 +230,7 @@ def close_gripper(controller: ArmController, arm: str = "both", wait: bool = Fal
         arm: 控制哪个臂或 "both"
         wait: 是否等待完成
     """
+    return open_gripper(controller, angle_deg=100.0, arm=arm, wait=wait)
     return open_gripper(controller, angle_deg=100.0, arm=arm, wait=wait)
 
 

@@ -2,7 +2,15 @@ from bessica_d_sdk import ArmController
 from bessica_d_sdk.utils import control
 import time
 
+from bessica_d_sdk.utils import control
+import time
+
 def main():
+    controller = ArmController(debug_mode=False)
+    try:
+        if not controller.connect():
+            print("机械臂没有连接")
+            return
     controller = ArmController(debug_mode=False)
     try:
         if not controller.connect():
