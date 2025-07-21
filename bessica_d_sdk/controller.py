@@ -59,10 +59,11 @@ class ArmController:
             debug_mode: 是否启用调试模式
         """
         self.debug_mode = debug_mode
-        
+        self._lock = threading.Lock()
+
         # 创建串口通信模块和数据解析器
-        self.serial_comm = SerialComm(port=port, baudrate=baudrate, debug_mode=debug_mode)
-        self.data_parser = DataParser(debug_mode=debug_mode)
+        self.serial_comm = SerialComm(lock=self._lock, port=port, baudrate=baudrate, debug_mode=debug_mode)
+        self.data_parser = DataParser(lock=self._lock, debug_mode=debug_mode)
         
         # 舵机数量
         self.servo_count = 10
@@ -87,7 +88,7 @@ class ArmController:
         self.read_interval = 0.005
         self._stop_thread = threading.Event()
         self._thread_running = False
-        self._lock = threading.Lock()
+        
         # self.chain= self.create_bessica_d_kinematic_chain()
         
         logger.info("初始化机械臂控制模块")
@@ -188,24 +189,20 @@ class ArmController:
             try:
                 with self._lock:
                     frame = self.serial_comm.read_frame()
-                    if frame == 9999999:
+
+                if frame == 9999999:
                         logger.error("串口读取异常，线程终止")
                         break
-                    elif frame:
+                
+                if frame:
                         self.data_parser.parse_frame(frame)
                    
             except Exception as e:
                 logger.error(f"状态线程异常：{e}")
                 break
             
-
         self._thread_running = False
         logger.info("状态更新线程结束")
-
-    
-        logger.info("状态更新线程结束")
-
-    
 
     def read_joint_angles(self, arm: str = 'both') -> Optional[Union[List[float], List[List[float]]]]:
         """

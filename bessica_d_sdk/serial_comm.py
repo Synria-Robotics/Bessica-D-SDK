@@ -18,7 +18,7 @@ FRAME_LENGTH = 50
 class SerialComm:
     """机械臂串口通信模块 - 简化版"""
     
-    def __init__(self, port: str = "", baudrate: int = 921600, 
+    def __init__(self, lock: threading.Lock, port: str = "", baudrate: int = 921600, 
                 timeout: float = 1.0, debug_mode: bool = False):
         """
         初始化串口通信模块
@@ -40,11 +40,10 @@ class SerialComm:
         self.last_log_time = 0
         self._last_print_time = 0
 
+        self._lock = lock
         self._rx_buffer = bytearray()
         self._log = []
         self.save_path = "/home/senyu/Bessica_github/Bessica-D-SDK/bessica_d_sdk/logs/serial_log.json"
-
-        self._lock = threading.Lock()
 
         logger.info(f"初始化串口通信模块: 端口={port or '自动'}, 波特率={baudrate}")
         logger.info(f"调试模式: {'启用' if debug_mode else '禁用'}")
@@ -269,7 +268,6 @@ class SerialComm:
                         print(f"[Frame] {parsed['raw_decimal']} {'(OK)' if parsed['valid'] else '(Invalid)'}")
                         self._last_print_time = now
 
-                # Step 3: 清除当前帧数据
                 self._rx_buffer = self._rx_buffer[FRAME_LENGTH:]
 
                 # Step 4: 若缓存过大，强制同步（防炸）
@@ -281,6 +279,7 @@ class SerialComm:
                         self._rx_buffer = self._rx_buffer[aa_index:]
 
                 if parsed["valid"]:
+                    self._rx_buffer.clear()
                     return candidate
                 
         except Exception as e:

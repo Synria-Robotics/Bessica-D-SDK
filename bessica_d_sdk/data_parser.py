@@ -2,6 +2,8 @@ import math
 import time
 import logging
 from typing import List, Dict, Tuple, Optional, Union, NamedTuple
+import threading 
+import copy
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, 
@@ -41,7 +43,7 @@ class DataParser:
     LEFT_ARM = 0X02
     RIGHT_ARM = 0X01
     
-    def __init__(self, debug_mode: bool = False):
+    def __init__(self, lock: threading.Lock, debug_mode: bool = False, ):
         """
         初始化数据解析器
         
@@ -53,7 +55,7 @@ class DataParser:
         # 存储最新数据   
         self._joint_states = {"left_arm": JointState([0.0]*7, 0.0, 0.0),
                               "right_arm": JointState([0.0]*7, 0.0, 0.0)}
-
+        self._lock = lock
         
         logger.info("初始化数据解析模块")
         if debug_mode:
@@ -102,15 +104,21 @@ class DataParser:
             return None
     
     def get_joint_state(self, arm: str = 'both'):
-        js = self._joint_states['left_arm']
-        if js.angles is None or js.timestamp is None:
-            logger.warning(f"{arm} 的状态尚未更新")
-            return None
+        with self._lock:
+            for a in ['left_arm','right_arm']:
+                js = self._joint_states[a]
+                if js.angles is None or js.timestamp is None:
+                    logger.warning(f"{arm} 的状态尚未更新")
+                    return None
 
-        if arm == 'both':
-            return self._joint_states
-        return self._joint_states[arm]
+            if arm == 'both':
+                return copy.deepcopy(self._joint_states)
+            return copy.deepcopy(self._joint_states[arm])
     
+    def _update_joint_state(self, arm: str, angles: List[float], gripper: float):
+        with self._lock:
+            self._joint_states[arm] = JointState(angles, gripper, time.time())
+
     def _parse_joint_data(self, frame: List[int]) -> Dict:
         """
         解析关节数据帧 (0x04)
@@ -192,29 +200,19 @@ class DataParser:
             # 转换为弧度
             gripper_rad = angle_deg * self.DEG_TO_RAD
 
-           
-            self._joint_states[arm] = JointState(joint_values, gripper_rad, time.time())
-           
-
-            # if self.debug_mode:
-            #     if arm == 'left_arm':
-            #         logger.debug(f"左臂的关节角度(度): {self._joint_angles_left}")
-            #         logger.debug(f"左臂的夹爪角度（弧度）：{self._gripper_rad_left}")
-            #     elif arm == 'right_arm':
-            #         logger.debug(f"右臂的关节角度(度): {self._joint_angles_right}")
-            #         logger.debug(f"右臂的夹爪角度（弧度）：{self._gripper_rad_right}")
-            
-        
-        
+            # 更新关节状态
+            self._update_joint_state(arm=arm, angles=joint_values, 
+                                     gripper=gripper_rad)
+                           
         return {
         "type": "dual_arm_joint_data",
-        # "timestamp_left": self._last_update_time_left,
-        # # "timestamp_right": self._last_update_time_right,
-        # "left_arm": self._joint_angles_left[3],
-        # # "right_arm": self._joint_angles_right,
-        # # "left_gripper": self._gripper_rad_left,
-        # # "right_gripper": self._gripper_rad_right
-    }
+        "timestamp_left": self._joint_states['left_arm'].timestamp,
+        "timestamp_right": self._joint_states['right_arm'].timestamp,
+        "left_arm_angle": self._joint_states['left_arm'].angles,
+        "right_arm_angle": self._joint_states['right_arm'].angles,
+        "left_gripper": self._joint_states['left_arm'].gripper,
+        "right_gripper": self._joint_states['right_arm'].gripper
+        }
 
 
     def _value_to_radians(self, value: int) -> float:
