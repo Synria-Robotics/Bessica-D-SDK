@@ -1,10 +1,11 @@
 """
 
-for Bessica-D follower arm zero calibration example
-python bessica_d_zero_calibration.py --follower True
+for Bessica-D arm zero calibration example
+left_arm: python bessica_d_zero_calibration.py --follower True
 
-for Bessica-D leader arm zero calibration example
-python bessica_d_zero_calibration.py
+right_arm: python bessica_d_zero_calibration.py --follower True
+
+both: python bessica_d_zero_calibration.py --follower True
 
 """
 

@@ -83,6 +83,14 @@ class ArmController:
             (6, 1.0),    # 关节7 -> 舵机10 (正向)
         ]
         
+        # controller.py - ArmController 类内部
+
+        # 方向因子：正方向与右臂一致，若左臂需要反向则为 -1
+        self.direction_map = {
+            "left_arm":  [-1, -1, 1, 1, -1, -1, 1],  # 示例方向，需实际测试调整
+            "right_arm": [1, 1, 1, 1, 1, 1, 1]       # 默认与机械臂正方向一致
+        }
+
         # 状态更新线程相关
         self._update_thread = None
         self.read_interval = 0.005
@@ -272,7 +280,7 @@ class ArmController:
     def set_joint_angles(self,
                         joint_angles: List[float],
                         arm: str = None,
-                        gripper_angle: Union[float, Tuple[float, float], List[float]] = None,
+                        gripper_angle: float = None,
                         wait_for_completion: bool = True,
                         timeout: float = 5.0,
                         tolerance: float = 0.08) -> bool:
@@ -283,11 +291,9 @@ class ArmController:
         - 指定 arm：控制单个机械臂（传入一个 [float] 列表）
 
         Args:
-            joint_angles: 单臂：长度为 7 的列表；双臂：包含两个列表的二维结构
-            arm: "left_arm" 或 "right_arm"，未指定时默认控制双臂
-            gripper_angle:
-            - 若为 float，则用于单臂模式的夹爪控制；
-            - 若为 (float, float) 或 [float, float]，则在双臂模式下分别控制左/右臂的夹爪；
+            joint_angles: 单臂：长度为 7 的列表
+            arm: "left_arm" 或 "right_arm"
+            gripper_angle:单臂夹爪控制；
             wait_for_completion: 是否等待运动完成
             timeout: 最大等待时间
             tolerance: 每个关节允许的最大误差（弧度）
@@ -303,6 +309,8 @@ class ArmController:
             if not isinstance(joint_angles, list) or len(joint_angles) != self.joint_count:
                 logger.error(f"{arm}：关节角度数量必须为 {self.joint_count}")
                 return False
+
+            mapped_angles = [angle * self.direction_map[arm][i] for i, angle in enumerate(joint_angles)]
 
             frame = self._build_joint_frame(joint_angles, arm=arm)
             result = self.serial_comm.send_data(frame)
@@ -327,8 +335,8 @@ class ArmController:
 
     
     def set_gripper(self, 
-                    angle_rad: Union[float, Tuple[float,float]], 
-                    arm: str= 'both',
+                    angle_rad: float, 
+                    arm: str,
                     wait_for_completion: bool = True, 
                     timeout: float = 5.0, 
                     tolerance: float = 0.1) -> bool:
@@ -336,11 +344,8 @@ class ArmController:
         设置夹爪角度（弧度）
 
         Args:
-            angle_rad: 
-                - float: 单臂夹爪角度（用于指定 arm）
-                - tuple: 双臂夹爪角度（left, right），用于 arm=None
+            angle_rad: 单臂夹爪角度（用于指定 arm）
             arm: 
-                - None: 控制双臂夹爪
                 - "left_arm" or "right_arm": 控制指定机械臂夹爪
             wait_for_completion: 是否等待夹爪运动完成
             timeout: 超时时间（秒）
@@ -350,14 +355,9 @@ class ArmController:
             bool: 命令是否成功发送和执行
         """
         # 校验输入
-        if arm == 'both':
-            if not isinstance(angle_rad, (tuple, list)) or len(angle_rad) != 2:
-                logger.error("双臂模式下 angle_rad 应为 (left, right)")
-                return False
-        else:
-            if not isinstance(angle_rad, (int, float)):
-                logger.error(f"{arm} 模式下 angle_rad 应为 float 类型")
-                return False
+        if not isinstance(angle_rad, (int, float)):
+            logger.error(f"{arm} 模式下 angle_rad 应为 float 类型")
+            return False
             
         # 构造夹爪控制帧
         frame = self._build_gripper_frame(angle_rad, arm=arm)
@@ -371,43 +371,19 @@ class ArmController:
         # === 等待运动完成 ===
         start_time = time.time()
 
-        if arm == 'both':
-            target_left, target_right = angle_rad
-            if self.debug_mode:
-                logger.debug(f"等待双夹爪运动到目标: 左夹爪={round(target_left * self.RAD_TO_DEG, 2)}°, 右夹爪={round(target_right * self.RAD_TO_DEG, 2)}°")
+        if self.debug_mode:
+            logger.info(f"等待 {arm} 夹爪运动到目标位置: {round(angle_rad * self.RAD_TO_DEG, 2)}°")
 
-            while time.time() - start_time < timeout:
-                state = self.data_parser.get_joint_state()
-                current_left = state["left_arm"].gripper
-                current_right = state["right_arm"].gripper
+        while time.time() - start_time < timeout:
+            gripper_now = self.data_parser.get_joint_state(arm).gripper
+            if abs(gripper_now - angle_rad) <= tolerance:
+                if self.debug_mode:
+                    logger.debug(f"{arm} 夹爪已到达目标位置")
+                return True
+            time.sleep(0.02)
 
-                left_ok = abs(current_left - target_left) <= tolerance
-                right_ok = abs(current_right - target_right) <= tolerance
-
-                if left_ok and right_ok:
-                    if self.debug_mode:
-                        logger.info("双夹爪已到达目标位置")
-                    return True
-
-                time.sleep(0.02)
-
-            logger.warning("等待双夹爪运动完成超时")
-            return False
-
-        else:
-            if self.debug_mode:
-                logger.info(f"等待 {arm} 夹爪运动到目标位置: {round(angle_rad * self.RAD_TO_DEG, 2)}°")
-
-            while time.time() - start_time < timeout:
-                gripper_now = self.data_parser.get_joint_state(arm).gripper
-                if abs(gripper_now - angle_rad) <= tolerance:
-                    if self.debug_mode:
-                        logger.debug(f"{arm} 夹爪已到达目标位置")
-                    return True
-                time.sleep(0.02)
-
-            logger.warning(f"{arm} 夹爪运动完成超时")
-            return False
+        logger.warning(f"{arm} 夹爪运动完成超时")
+        return False
     
     def set_zero_position(self, arm:str) -> bool:
         """
