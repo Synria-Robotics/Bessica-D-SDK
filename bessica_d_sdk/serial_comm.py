@@ -77,7 +77,6 @@ class SerialComm:
             
             # 检查串口是否是cu.usbserial，该串口通常为macOS
             if 'cu.usbserial' in port:
-                print("Found cu port")
 
                 # 检查波特率是否为macOS所能识别的
                 if self.baudrate == self.baudrate_default:
@@ -168,7 +167,14 @@ class SerialComm:
                     if should_log:
                         logger.info(f"找到可用设备: {port.device}")
                     return port.device
-        
+
+            #尝试找到可用的COM设备
+            elif "COM" in port.device:
+                if os.access(port.device, os.R_OK | os.W_OK):
+                    if should_log:
+                        logger.info(f"找到可用设备: {port.device}")
+                    return port.device
+
         if should_log:
             logger.warning("未找到可用的ttyUSB或者cu.usbserial设备")
         return ""
@@ -201,8 +207,8 @@ class SerialComm:
                     logger.warning(f"只写入了 {bytes_written} 字节，应为 {len(data)} 字节")
                     return False
                 
-                # if self.debug_mode:
-                #     self._print_hex_frame(data, 0)     
+                if self.debug_mode:
+                    self._print_hex_frame(data, 0)     
                 return True
                     
             except Exception as e:
@@ -268,18 +274,11 @@ class SerialComm:
 
                 # Step 4: 若缓存过大，强制同步（防炸）
                 if len(self._rx_buffer) > 1000:
-                    # now = time.time()
-                    # # if now - self._last_clear_time > 1.0:
-                    # #     print(f"[Warning] Buffer too large ({len(self._rx_buffer)}), force cleaning...")
-                    # #     print(f"帧头：{self._rx_buffer[0]}, frame tail: {self._rx_buffer[FRAME_LENGTH-1]}")
-                    #     # self._last_clear_time = now
                     aa_index = self._rx_buffer.find(0xAA)
                     if aa_index == -1:
                         self._rx_buffer.clear()
                     else:
                         self._rx_buffer = self._rx_buffer[aa_index:]
-
-                        # print(f"[buffer] 长度：{len(self._rx_buffer)}")
 
                 if parsed["valid"]:
                     return candidate
@@ -334,8 +333,8 @@ class SerialComm:
             data: 数据帧
             type_code: 0=发送数据, 1=接收数据, 其他=部分数据
         """
-        # if not self.debug_mode:
-        #     return
+        if not self.debug_mode:
+            return
         
         prefix = {
             0: "发送数据: ",
@@ -344,5 +343,7 @@ class SerialComm:
         }.get(type_code, "未知数据: ")
         
         hex_str = " ".join([f"{byte:02X}" for byte in data])
+        now = time.time()
+        self._last_print_time
         logger.info(f"{prefix}{hex_str}")
 

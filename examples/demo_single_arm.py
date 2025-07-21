@@ -11,15 +11,10 @@ def main():
         if not controller.connect():
             print("机械臂没有连接")
             return
-    controller = ArmController(debug_mode=False)
-    try:
-        if not controller.connect():
-            print("机械臂没有连接")
-            return
 
         print("=== 左臂控制示例 ===")
         control.print_joint_angles(controller, arm="left_arm")
-        # control.wait_for_valid_state(controller, arm='left_arm')
+        control.wait_for_valid_state(controller, arm='left_arm')
         time.sleep(2)
         # control.move_to_zero(controller, arm="left_arm")
         control.move_all_joints(controller, angles_deg=[0,0,0,0,0,0,0], arm="left_arm", interpolate=True)
