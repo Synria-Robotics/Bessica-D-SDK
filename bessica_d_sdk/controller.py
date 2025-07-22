@@ -87,8 +87,8 @@ class ArmController:
 
         # 方向因子：正方向与右臂一致，若左臂需要反向则为 -1
         self.direction_map = {
-            "left_arm":  [-1, -1, 1, 1, -1, -1, 1],  # 示例方向，需实际测试调整
-            "right_arm": [1, 1, 1, 1, 1, 1, 1]       # 默认与机械臂正方向一致
+            "left_arm":  [1, 1, 1, 1, 1, -1, 1],  # 示例方向，需实际测试调整
+            "right_arm": [-1, 1, -1, 1, -1, -1, 1]       # 默认与机械臂正方向一致
         }
 
         # 状态更新线程相关
@@ -312,7 +312,7 @@ class ArmController:
 
             mapped_angles = [angle * self.direction_map[arm][i] for i, angle in enumerate(joint_angles)]
 
-            frame = self._build_joint_frame(joint_angles, arm=arm)
+            frame = self._build_joint_frame(mapped_angles, arm=arm)
             result = self.serial_comm.send_data(frame)
 
             if gripper_angle is not None:
@@ -323,7 +323,7 @@ class ArmController:
                 start_time = time.time()
                 while time.time() - start_time < timeout:
                     angles_now = self.data_parser.get_joint_state(arm).angles
-                    if all(abs(angles_now[i] - joint_angles[i]) <= tolerance for i in range(self.joint_count)):
+                    if all(abs(angles_now[i] - mapped_angles[i]) <= tolerance for i in range(self.joint_count)):
                         break
                     time.sleep(0.02)
 
@@ -423,9 +423,9 @@ class ArmController:
         data = [0] * 2
         data[1] = 0x01
         if arm == 'left_arm':
-            data[0] = 0x02
-        elif arm == 'right_arm':
             data[0] = 0x01
+        elif arm == 'right_arm':
+            data[0] = 0x02
         elif arm == 'both':
             data[0] = 0x03
 
@@ -449,9 +449,9 @@ class ArmController:
         data = [0] * 2
         data[1] = 0x00
         if arm == 'left_arm':
-            data[0] = 0x02
-        elif arm == 'right_arm':
             data[0] = 0x01
+        elif arm == 'right_arm':
+            data[0] = 0x02
         elif arm == 'both':
             data[0] = 0x03
 

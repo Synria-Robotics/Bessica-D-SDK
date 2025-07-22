@@ -2,6 +2,7 @@ from typing import List, Union
 import time
 from bessica_d_sdk.controller import ArmController
 import logging
+import copy
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, 
@@ -15,11 +16,14 @@ logging.basicConfig(level=logging.INFO,
 logger = logging.getLogger("Control_utils")
 
 
+def ease_in_out_cubic(x: float) -> float:
+    return 4 * x**3 if x < 0.5 else 1 - pow(-2 * x + 2, 3) / 2
+
 def control_move(controller: ArmController,
                  current_angles: Union[List[float], List[List[float]]],
                  target_angles: Union[List[float], List[List[float]]],
                  arm: str,
-                 steps: int = 100,
+                 steps: int = 200,
                  delay: float = 0.02) -> bool:
     """
     缓慢插值移动机械臂到目标角度（支持单臂或双臂）
@@ -35,33 +39,36 @@ def control_move(controller: ArmController,
     Returns:
         bool: 控制是否成功
     """
-    
-    
+
     if arm == "both":
         for step in range(1, steps + 1):
-            interp_angles_left, interp_angles_right = [
-                [c + (t - c) * step / steps for c, t in zip(current_angles[0], target_angles[0])],
-                [c + (t - c) * step / steps for c, t in zip(current_angles[1], target_angles[1])]
+            ratio = ease_in_out_cubic(step / steps)
+            interp_angles_left = [
+                c + (t - c) * ratio for c, t in zip(current_angles[0], target_angles[0])
             ]
-            
-            controller.set_joint_angles(interp_angles_left, arm="left_arm", wait_for_completion=False)
+            interp_angles_right = [
+                c + (t - c) * ratio for c, t in zip(current_angles[1], target_angles[1])
+            ]
+
+            if not controller.set_joint_angles(interp_angles_left, arm="left_arm", wait_for_completion=False):
+                return False
             time.sleep(0.01)
-            controller.set_joint_angles(interp_angles_right, arm="right_arm", wait_for_completion=False)
+            if not controller.set_joint_angles(interp_angles_right, arm="right_arm", wait_for_completion=False):
+                return False
             time.sleep(0.01)
-               
             time.sleep(delay)
 
     elif arm in ["left_arm", "right_arm"]:
         for step in range(1, steps + 1):
-            interp_angles = [c + (t - c) * step / steps for c, t in zip(current_angles, target_angles)]
+            ratio = ease_in_out_cubic(step / steps)
+            interp_angles = [c + (t - c) * ratio for c, t in zip(current_angles, target_angles)]
             if not controller.set_joint_angles(interp_angles, arm=arm, wait_for_completion=False):
                 return False
             time.sleep(delay)
-    
     else:
         logger.error(f"请检查arm输入指令是否正确，当前arm值为{arm}")
         return False
-    
+
     return True
 
 def wait_for_valid_state(controller: ArmController, arm: str, timeout: float=5.0):
@@ -107,7 +114,7 @@ def move_joint(controller: ArmController, joint_id: int, angle_deg: float, arm: 
         return False
     state = controller.read_joint_state(arm)
     current = state.angles
-    target = list(current)
+    target = copy.deepcopy(current)
     target[joint_id] = angle_deg * controller.DEG_TO_RAD
 
     if interpolate:
@@ -115,7 +122,7 @@ def move_joint(controller: ArmController, joint_id: int, angle_deg: float, arm: 
     else:
         return controller.set_joint_angles(joint_angles=target, arm=arm, wait_for_completion=True)
 
-def move_all_joints(controller: ArmController, angles_deg: List[float], arm: str = None, interpolate: bool = True) -> bool:
+def move_joints(controller: ArmController, angles_deg: List[float], arm: str = None, interpolate: bool = True) -> bool:
     """
     控制单臂所有关节角度（单位：度）
 
@@ -143,7 +150,7 @@ def move_all_joints(controller: ArmController, angles_deg: List[float], arm: str
     else:
         return controller.set_joint_angles(joint_angles=target, arm=arm, wait_for_completion=True)
 
-def move_dual_joint(controller: ArmController, angles_left_deg: List[float], angles_right_deg: List[float], interpolate: bool = True) -> bool:
+def move_joint_dual_arm(controller: ArmController, left_joint_id: int, right_joint_id: int, angles_left_deg: float, angles_right_deg: float, interpolate: bool = True) -> bool:
     """
     控制双臂全部 14 个关节（单位：度）
 
@@ -155,14 +162,40 @@ def move_dual_joint(controller: ArmController, angles_left_deg: List[float], ang
     Returns:
         bool: 控制是否成功
     """
-    if len(angles_left_deg) != 7 or len(angles_right_deg) != 7:
-        print("每个机械臂必须提供 7 个关节角度")
+    current = controller.read_joint_angles(arm='both')
+    target = copy.deepcopy(current)
+
+    target[0][left_joint_id] = angles_left_deg * controller.DEG_TO_RAD
+    target[1][right_joint_id] = angles_right_deg * controller.DEG_TO_RAD
+
+    if interpolate:
+        return control_move(controller, current, target, arm="both")
+    else:
+        return controller.set_joint_angles(joint_angles=target, arm="both", wait_for_completion=True)
+
+def move_joints_dual_arm(controller: ArmController, 
+                         left_angles_deg: List[float], 
+                         right_angles_deg: List[float], 
+                         interpolate: bool = True) -> bool:
+    """
+    控制双臂全部 14 个关节（单位：度）
+
+    Args:
+        left_angles_deg: 左臂 7 个关节角度
+        right_angles_deg: 右臂 7 个关节角度
+        interpolate: 是否插值移动
+
+    Returns:
+        bool: 控制是否成功
+    """
+    if len(left_angles_deg) != 7 or len(right_angles_deg) != 7:
+        logger.error("每个机械臂必须提供 7 个关节角度")
         return False
 
-    current = controller.read_joint_angles(arm='both')
+    current = controller.read_joint_angles(arm="both")
     target = [
-        [a * controller.DEG_TO_RAD for a in angles_left_deg],
-        [a * controller.DEG_TO_RAD for a in angles_right_deg]
+        [a * controller.DEG_TO_RAD for a in left_angles_deg],
+        [a * controller.DEG_TO_RAD for a in right_angles_deg],
     ]
 
     if interpolate:

@@ -18,9 +18,9 @@ states["left_arm"] = JointState(angles,None,None)
 a = 1
 
 def main():
-    while True:
-        print('asd')
-        return None 
+    a = [1,2,3]
+    b = a * 3
+    print(b)
 
 if __name__ == "__main__":
     main()

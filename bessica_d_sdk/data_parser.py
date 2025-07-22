@@ -57,6 +57,11 @@ class DataParser:
                               "right_arm": JointState([0.0]*7, 0.0, 0.0)}
         self._lock = lock
         
+        self.direction_map = {
+            "left_arm":  [1, 1, 1, 1, 1, -1, 1],  # 示例方向，需实际测试调整
+            "right_arm": [-1, 1, -1, 1, -1, -1, 1]       # 默认与机械臂正方向一致
+        }
+
         logger.info("初始化数据解析模块")
         if debug_mode:
             logger.info("调试模式: 启用")
@@ -185,7 +190,8 @@ class DataParser:
                     # 转换为弧度并应用方向系数
                     angle_rad = self._value_to_radians(servo_value) * direction
                     joint_values[joint_idx] = angle_rad
-        
+
+                
             # 处理夹爪数据
             gripper_raw = frame[start_idx + 10*2] | (frame[start_idx + 10*2 + 1])
 
@@ -200,8 +206,9 @@ class DataParser:
             # 转换为弧度
             gripper_rad = angle_deg * self.DEG_TO_RAD
 
+            mapped_angles = [angle * self.direction_map[arm][i] for i, angle in enumerate(joint_values)]
             # 更新关节状态
-            self._update_joint_state(arm=arm, angles=joint_values, 
+            self._update_joint_state(arm=arm, angles=mapped_angles, 
                                      gripper=gripper_rad)
                            
         return {

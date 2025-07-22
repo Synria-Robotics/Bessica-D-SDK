@@ -42,11 +42,17 @@ def main():
         print("连接成功，开始读取数据...")
         print("按 Ctrl+C 退出")
         print("-" * 50)
-        if arm_type == "right_arm":
+        if arm_type in ["right_arm", "left_arm"]:
             print("操作臂调零前需进入无力矩状态导致无法维持当前状态，请确保安全")
             print(f"当前调零{arm_type}")
             input("按 Enter 键开始...")
-            controller.disable_torque(arm_type)
+            while True:
+                # controller.disable_torque(arm_type)
+                controller.enable_torque(arm_type)
+                time.sleep(1)
+                usr = input()
+                if usr.lower() == 'q':
+                    break
             try:
                 input("准备好后请按 Enter 键开始操作臂调零...")
                 print("正在执行调零校准...")
