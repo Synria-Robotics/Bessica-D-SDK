@@ -1,35 +1,53 @@
-from bessica_d_sdk import ArmController
-from bessica_d_sdk.utils import control
 import time
+from bessica_d_sdk.controller import ArmController
+from bessica_d_sdk.utils import open_gripper, close_gripper, set_gripper_angle, set_dual_gripper
+
 def main():
+    print("=== Bessica-D 夹爪控制 Demo ===")
+
     controller = ArmController(debug_mode=False)
+    if not controller.connect():
+        print("连接失败")
+        return
+
     try:
-        if not controller.connect():
-            print("机械臂没有连接")
-            return
+        controller.enable_torque("both")
+        time.sleep(1)
 
-        print("=== 单臂夹爪控制 ===")
-        i = 0
-        # for i in range(10):
-        #     control.open_gripper(controller, arm='right_arm')
-        #     time.sleep(1)
-        #     control.set_gripper_angle(controller, angle_deg=50, arm='right_arm')
-        #     time.sleep(1)
-        #     control.close_gripper(controller, arm="right_arm")
-        #     time.sleep(1)
-        #     i +=1
-            
-        print("=== 双臂夹爪控制 ===")
-        for i in range(10):
-            control.open_gripper(controller, arm="both")
-            time.sleep(1)
-            control.set_dual_gripper(controller, left_deg=50, right_deg=30)
-            time.sleep(1)
-            control.close_gripper(controller, arm="both")
-            time.sleep(1)
+        # 1. 打开夹爪
+        print("打开左臂夹爪")
+        open_gripper(controller, arm="left_arm")
+        print(f"当前夹爪角度：{controller.read_gripper_data('left_arm')}")
+        time.sleep(1)
 
-    except KeyboardInterrupt:
-        print("\n\n程序已停止")
+        print("打开右臂夹爪")
+        open_gripper(controller, arm="right_arm")
+        print(f"当前夹爪角度：{controller.read_gripper_data('right_arm')}")
+        time.sleep(1)
+
+        # 2. 关闭夹爪
+        print("关闭左臂夹爪")
+        close_gripper(controller, arm="left_arm")
+        print(f"当前夹爪角度：{controller.read_gripper_data('left_arm')}")
+        time.sleep(1)
+
+        print("关闭右臂夹爪")
+        close_gripper(controller, arm="right_arm")
+        print(f"当前夹爪角度：{controller.read_gripper_data('right_arm')}")
+        time.sleep(1)
+
+        # 3. 设置夹爪角度（单臂）
+        print("设置右臂夹爪角度为 60")
+        set_gripper_angle(controller, 60, arm="right_arm")
+        print(f"当前夹爪角度：{controller.read_gripper_data('right_arm')}")
+        time.sleep(1)
+
+        # 4. 设置双臂夹爪角度
+        print("设置双臂夹爪角度，左=30，右=70")
+        set_dual_gripper(controller, left_deg=30, right_deg=70)
+        print(f"当前夹爪角度：{controller.read_gripper_data('both')}")
+        time.sleep(1)
+
     finally:
         controller.disconnect()
         print("已断开连接")

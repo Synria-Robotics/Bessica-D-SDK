@@ -52,10 +52,10 @@ def control_move(controller: ArmController,
 
             if not controller.set_joint_angles(interp_angles_left, arm="left_arm", wait_for_completion=False):
                 return False
-            time.sleep(0.01)
+            time.sleep(0.005)
             if not controller.set_joint_angles(interp_angles_right, arm="right_arm", wait_for_completion=False):
                 return False
-            time.sleep(0.01)
+            time.sleep(0.005)
             time.sleep(delay)
 
     elif arm in ["left_arm", "right_arm"]:
@@ -218,7 +218,7 @@ def set_gripper_angle(controller: ArmController, angle_deg: float, arm: str = "l
     angle_rad = angle_deg * controller.DEG_TO_RAD
     return controller.set_gripper(angle_rad, arm=arm, wait_for_completion=wait)
 
-def set_dual_gripper(controller: ArmController, left_deg: float, right_deg: float, wait: bool = False) -> bool:
+def set_dual_gripper(controller: ArmController, left_deg: float, right_deg: float, wait: bool = True) -> bool:
     """
     分别控制左右臂夹爪角度（单位：度）
 
@@ -231,12 +231,12 @@ def set_dual_gripper(controller: ArmController, left_deg: float, right_deg: floa
         bool: 控制是否成功
     """
     angles_rad = (left_deg * controller.DEG_TO_RAD, right_deg * controller.DEG_TO_RAD)
-    controller.set_gripper(angles_rad[0], arm="left_arm", wait_for_completion=wait)
-    time.sleep(0.05)
+    controller.set_gripper(angles_rad[0], arm="left_arm", wait_for_completion=False)
+    time.sleep(0.1)
     controller.set_gripper(angles_rad[1], arm="right_arm", wait_for_completion=wait)
     
 
-def open_gripper(controller: ArmController, angle_deg: float = 0.0, arm: str = "both", wait: bool = False) -> bool:
+def open_gripper(controller: ArmController, angle_deg: float = 0.0, arm: str = "both", wait: bool = True) -> bool:
     """
     打开夹爪（默认 100°）
 

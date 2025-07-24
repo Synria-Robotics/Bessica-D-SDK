@@ -1,42 +1,35 @@
-from bessica_d_sdk import ArmController
-from bessica_d_sdk.utils import control
 import time
-
-from bessica_d_sdk.utils import control
-import time
+from bessica_d_sdk.controller import ArmController
+from bessica_d_sdk.utils import move_joints, move_joint, move_to_zero
 
 def main():
+    print("=== Bessica-D 单臂关节控制 Demo ===")
+
     controller = ArmController(debug_mode=False)
+    if not controller.connect():
+        print("连接失败")
+        return
+
+    arm = "right_arm"  # 可改为 "left_arm"
+
     try:
-        if not controller.connect():
-            print("机械臂没有连接")
-            return
+        move_to_zero(controller,arm)
 
-        print("=== 左臂控制示例 ===")
-        control.print_joint_angles(controller, arm="left_arm")
-        control.wait_for_valid_state(controller, arm='left_arm')
+        # 1. 设置全部7个关节角度
+        target_angles = [10, 20, 30, 0, 45, -15, 5]
+        print(f"设置 {arm} 所有关节角度为: {target_angles}")
+        move_joints(controller, target_angles, arm)
         time.sleep(2)
-        # control.move_to_zero(controller, arm="left_arm")
-        control.move_all_joints(controller, angles_deg=[0,0,0,0,0,0,0], arm="left_arm", interpolate=True)
-        
-        i = 0
-        max_steps = 10  # 限制循环次数，便于测试
-        # while i < max_steps:
-        #     print(f"\n第 {i} 次运行")
-        #     control.print_joint_angles(controller, arm="right_arm")
-        #     control.move_to_zero(controller, arm="right_arm")
-        #     # control.move_all_joints(controller, angles_deg=[0,0,0,0,0,0,0], arm="left_arm", interpolate=True)
-        #     # move 到目标角度
-        #     control.move_all_joints(controller, angles_deg=[10,10,10,10,0,0,20], arm="right_arm", interpolate=True)
-    
-        #     control.print_joint_angles(controller, arm="right_arm")
 
-         
-        #     i += 1
+        # 2. 设置单个关节角度（关节 2）
+        joint_id = 2
+        target_angle = 60
+        print(f"设置 {arm} 第 {joint_id} 个关节为 {target_angle} 度")
+        move_joint(controller, joint_id, target_angle, arm)
+        time.sleep(2)
 
-        print("\n控制结束，断开连接")
-    except KeyboardInterrupt:
-        print("\n\n程序已停止")
+        move_to_zero(controller,arm)
+
     finally:
         controller.disconnect()
         print("已断开连接")

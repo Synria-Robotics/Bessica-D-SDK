@@ -39,9 +39,8 @@ class DataParser:
 
     # 识别帧
     PRESENT_POSITION = 0x38 #当前机械臂关节角度识别帧
-    PRESENT_SPEED = 0x41    #当前机械臂关节速度识别帧
-    LEFT_ARM = 0X02
-    RIGHT_ARM = 0X01
+    # PRESENT_SPEED = 0x41    #当前机械臂关节速度识别帧 （待开发）
+
     
     def __init__(self, lock: threading.Lock, debug_mode: bool = False, ):
         """
@@ -140,7 +139,7 @@ class DataParser:
             return None
         
         # 检查数据长度
-        if frame[2] != 45:  
+        if frame[2] != self.JOINT_DATA_SIZE:  
             logger.warning(f"关节数据长度错误: {frame[2]}")
             return None
         
@@ -249,61 +248,6 @@ class DataParser:
             logger.error(f"值转换异常: {str(e)}")
             return 0.0
     
-    # def _parse_gripper_data(self, frame: List[int]) -> Dict:
-    #     """
-    #     解析夹爪数据帧 (0x02)
-        
-    #     Args:
-    #         frame: 完整的数据帧
-            
-    #     Returns:
-    #         Dict: 解析结果
-    #     """
-    #     # 解析按钮状态 (如果数据帧中包含)
-    #     button1 = False
-    #     button2 = False
-        
-
-    #     # 检查最小长度
-    #     if len(frame) < 8:
-    #         logger.warning("夹爪数据帧长度不足")
-    #         return None
-        
-    #     if button1:
-    #          gripper_raw = frame[6] | (frame[7] << 8)
-    #     # 从字节4-5提取夹爪角度
-    #     else:
-    #         gripper_raw = frame[4] | (frame[5] << 8)
-    #     # print("gripper_raw", gripper_raw)
-    #     # 范围检查
-    #     if gripper_raw < 2048 or gripper_raw > 2900:
-    #         gripper_raw = max(2048, min(gripper_raw, 2900))
-        
-    #     # 转换为角度 (0-100度)
-    #     angle_deg = (gripper_raw - 2048) / 8.52
-        
-    #     # 转换为弧度
-    #     gripper_rad = angle_deg * self.DEG_TO_RAD
-        
-
-        
-    #     # 更新存储的数据
-    #     self._gripper_angle = gripper_rad
-    #     self._button1 = button1
-    #     self._button2 = button2
-    #     self._last_update_time = time.time()
-        
-    #     if self.debug_mode:
-    #         logger.debug(f"夹爪原始值: {gripper_raw}, 角度: {angle_deg:.2f}度, 弧度: {gripper_rad:.4f}")
-    #         logger.debug(f"按钮状态: 按钮1={'按下' if button1 else '释放'}, 按钮2={'按下' if button2 else '释放'}")
-        
-    #     return {
-    #         "type": "gripper_data",
-    #         "gripper_angle": gripper_rad,
-    #         "button1": button1,
-    #         "button2": button2,
-    #         "timestamp": self._last_update_time
-    #     }
     
     def _parse_error_data(self, frame: List[int]) -> Dict:
         """
@@ -411,45 +355,3 @@ class DataParser:
         """
         return " ".join([f"{b:02X}" for b in data])
     
-# def main():
-#     data = DataParser(debug_mode=True)
-#     frame = [
-#     0xAA,       # 帧头
-#     0x06,       # 指令ID
-#     44,         # 数据长度
-#     # --- 右臂11个舵机 (22字节) ---
-#     0x00, 0x08,  # 舵机1 = 2048
-#     0x10, 0x08,  # 舵机2 = 2064
-#     0x20, 0x08,
-#     0x30, 0x08,
-#     0x40, 0x08,
-#     0x50, 0x08,
-#     0x60, 0x08,
-#     0x70, 0x08,
-#     0x80, 0x08,
-#     0x90, 0x08,
-#     0xA0, 0x08,
-#     # --- 左臂11个舵机 (22字节) ---
-#     0x00, 0x08,
-#     0x10, 0x08,
-#     0x20, 0x08,
-#     0x30, 0x08,
-#     0x40, 0x08,
-#     0x50, 0x08,
-#     0x60, 0x08,
-#     0x70, 0x08,
-#     0x80, 0x08,
-#     0x90, 0x08,
-#     0xA0, 0x08]
-#     # 计算校验位（从第3位开始直到倒数第2位前）
-#     checksum = sum(frame[3:]) % 2
-#     frame.append(checksum)  # 校验位
-#     frame.append(0xFF)      # 帧尾
-
-#     a= data._parse_joint_data(frame=frame)
-#     a = (data._joint_states['left_arm'].gripper)
-#     print(a)
-   
-
-# if __name__ == "__main__":
-#     main() 

@@ -64,7 +64,7 @@ def teaching_mode(controller: ArmController):
             [a * controller.RAD_TO_DEG for a in raw_angles[0]],
             [a * controller.RAD_TO_DEG for a in raw_angles[1]]
         ]
-        
+
     input("按回车执行轨迹")
 
     def move(a, b):
@@ -99,7 +99,7 @@ def main():
     if not controller.connect():
         print("无法连接到机械臂")
         return
-
+    
     while True:
         print("\n========= Bessica-D 终极测试菜单 =========")
         print("1. 控制夹爪（开/关）")
@@ -189,7 +189,12 @@ def main():
             arm = select_arm()
             print("扭矩将临时关闭，请确保安全。")
             input("准备好后按 Enter 继续...")
-            controller.set_zero_position(arm)
+            controller.disable_torque(arm)
+            input("按回车确认零点位置，请继续用手扶着机械臂")
+            result = controller.set_zero_position(arm)
+            time.sleep(1)
+            print(f"归零结果为{result}")
+            
 
         elif choice == '6':
             arm = select_arm()

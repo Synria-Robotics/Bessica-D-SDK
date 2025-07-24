@@ -42,8 +42,6 @@ class SerialComm:
 
         self._lock = lock
         self._rx_buffer = bytearray()
-        self._log = []
-        self.save_path = "/home/senyu/Bessica_github/Bessica-D-SDK/bessica_d_sdk/logs/serial_log.json"
 
         logger.info(f"初始化串口通信模块: 端口={port or '自动'}, 波特率={baudrate}")
         logger.info(f"调试模式: {'启用' if debug_mode else '禁用'}")
@@ -214,19 +212,6 @@ class SerialComm:
                 logger.error(f"发送数据时异常: {str(e)}")
                 return False
     
-    def save_log(self):
-        try:
-            # 自动构造文件名
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            save_path = f"/home/senyu/Bessica_github/Bessica-D-SDK/bessica_d_sdk/logs/serial_log_{timestamp}.json"
-
-            with open(save_path, 'w') as f:
-                json.dump(self._log, f, indent=2)
-
-            print(f"[Saved] Log saved to {save_path}")
-        except Exception as e:
-            print(f"[Save Error] {e}")
-
 
     def read_frame(self) -> Optional[List[int]]:
         """
@@ -260,7 +245,6 @@ class SerialComm:
                 "raw_decimal": list(candidate),
                 "valid": valid_tail and valid_checksum
             }
-                self._log.append(parsed)
                 
                 if self.debug_mode:
                     now = time.time()
