@@ -10,7 +10,8 @@ from bessica_d_sdk.utils import (
     close_gripper,
     print_joint_angles,
     set_gripper_angle,
-    set_dual_gripper
+    set_dual_gripper,
+    print_gripper_angles
 )
 
 import sys
@@ -115,22 +116,32 @@ def main():
 
         if choice == '1':
             arm = select_arm()
-            mode = input("输入 'open' 打开夹爪，'close' 关闭夹爪，或输入角度 (0~100): ").strip()
-            try:
-                angle = float(mode)
-                if arm == 'both':
-                    left = float(input("左臂角度(0~100): "))
-                    right = float(input("右臂角度(0~100): "))
+            
+            if arm == 'both':
+                # 双臂模式下分别输入左右角度
+                try:
+                    left = float(input("左臂角度(0~100): ")) 
+                    right = float(input("右臂角度(0~100): ")) 
                     set_dual_gripper(controller, left, right)
-                else:
+                except ValueError:
+                    print("非法输入：请输入数值角度")
+            
+            else:
+                # 单臂模式
+                mode = input("输入 'open' 打开夹爪，'close' 关闭夹爪，或输入角度 (0~100): ").strip()
+                try:
+                    angle = float(mode)
                     set_gripper_angle(controller, angle, arm)
-            except ValueError:
-                if mode == 'open':
-                    open_gripper(controller, arm=arm)
-                elif mode == 'close':
-                    close_gripper(controller, arm=arm)
-                else:
-                    print("非法输入")
+                except ValueError:
+                    if mode == 'open':
+                        open_gripper(controller, arm=arm)
+                    elif mode == 'close':
+                        close_gripper(controller, arm=arm)
+                    else:
+                        print("非法输入")
+
+            print_gripper_angles(controller, arm)
+
 
         elif choice == '2':
             arm = select_arm()
@@ -170,11 +181,16 @@ def main():
         elif choice == '4':
             arm = select_arm()
             mode = input("是否循环读取关节角度？(y/n): ").strip().lower()
+            read_gripper = input("是否读取夹爪角度？（y/n）: ").strip().lower()
+            if read_gripper == 'y':
+                read_gripper = True
+            else:
+                read_gripper = False
             if mode == 'y':
                 print("按 Enter 停止循环读取...")
                 try:
                     while True:
-                        print_joint_angles(controller, arm)
+                        print_joint_angles(controller, arm, read_gripper)
                         time.sleep(0.5)
                         if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
                             input()  # 停止读取
@@ -183,7 +199,7 @@ def main():
                 except KeyboardInterrupt:
                     print("用户中断，已退出读取。")
             else:
-                print_joint_angles(controller, arm)
+                print_joint_angles(controller, arm, read_gripper)
 
         elif choice == '5':
             arm = select_arm()

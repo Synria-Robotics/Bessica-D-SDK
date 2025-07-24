@@ -689,11 +689,12 @@ class ArmController:
             logger.warning(f"夹爪角度值超出范围: {angle_deg:.2f}度，会被截断")
             angle_deg = 100.0
         
-        # 转换公式：0度对应2048，100度对应3800
-        value = int(2048 + (angle_deg * (3800-2048)/100))
+        servo_value = 3590
+        # 转换公式：0度对应2048，100度对应servo_value
+        value = int(2048 + (angle_deg * (servo_value-2048)/100))
         
         # 范围限制
-        return max(2048, min(3800, value))
+        return max(2048, min(servo_value, value))
     
     def _calculate_checksum(self, frame: List[int]) -> int:
         """

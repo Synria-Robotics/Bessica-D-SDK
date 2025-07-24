@@ -55,7 +55,6 @@ class DataParser:
         self._joint_states = {"left_arm": JointState([0.0]*7, 0.0, 0.0),
                               "right_arm": JointState([0.0]*7, 0.0, 0.0)}
         self._lock = lock
-        
         self.direction_map = {
             "left_arm":  [1, 1, 1, 1, 1, -1, 1],  # 示例方向，需实际测试调整
             "right_arm": [-1, 1, -1, 1, -1, -1, 1]       # 默认与机械臂正方向一致
@@ -192,14 +191,16 @@ class DataParser:
 
                 
             # 处理夹爪数据
-            gripper_raw = frame[start_idx + 10*2] | (frame[start_idx + 10*2 + 1])
+            gripper_raw = frame[start_idx + 10*2] | (frame[start_idx + 10*2 + 1] << 8)
+
+            close_servo_value = 3590
 
              # 范围检查
-            if gripper_raw < 2048 or gripper_raw > 2900:
-                gripper_raw = max(2048, min(gripper_raw, 2900))
+            if gripper_raw < 2048 or gripper_raw > close_servo_value:
+                gripper_raw = max(2048, min(gripper_raw, close_servo_value))
             
             # 转换为角度 (0-100度)
-            servo_to_angle_ratio = (2900-2048)/100
+            servo_to_angle_ratio = (close_servo_value-2048)/100
             angle_deg = (gripper_raw - 2048) / servo_to_angle_ratio
             
             # 转换为弧度

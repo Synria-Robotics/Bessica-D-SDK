@@ -203,7 +203,7 @@ def move_joints_dual_arm(controller: ArmController,
     else:
         return controller.set_joint_angles(joint_angles=target, arm="both", wait_for_completion=True)
 
-def set_gripper_angle(controller: ArmController, angle_deg: float, arm: str = "left_arm", wait: bool = False) -> bool:
+def set_gripper_angle(controller: ArmController, angle_deg: float, arm: str = "left_arm", wait: bool = True) -> bool:
     """
     控制单个机械臂夹爪的角度（单位：度）
 
@@ -231,12 +231,13 @@ def set_dual_gripper(controller: ArmController, left_deg: float, right_deg: floa
         bool: 控制是否成功
     """
     angles_rad = (left_deg * controller.DEG_TO_RAD, right_deg * controller.DEG_TO_RAD)
-    controller.set_gripper(angles_rad[0], arm="left_arm", wait_for_completion=False)
+    controller.set_gripper(angles_rad[0], arm="left_arm", wait_for_completion=wait)
     time.sleep(0.1)
     controller.set_gripper(angles_rad[1], arm="right_arm", wait_for_completion=wait)
+    time.sleep(0.1)
     
 
-def open_gripper(controller: ArmController, angle_deg: float = 0.0, arm: str = "both", wait: bool = True) -> bool:
+def open_gripper(controller: ArmController, angle_deg: float = 100.0, arm: str = "both", wait: bool = True) -> bool:
     """
     打开夹爪（默认 100°）
 
@@ -250,7 +251,7 @@ def open_gripper(controller: ArmController, angle_deg: float = 0.0, arm: str = "
     else:
         return set_gripper_angle(controller, angle_deg, arm=arm, wait=wait)
 
-def close_gripper(controller: ArmController, arm: str = "both", wait: bool = False) -> bool:
+def close_gripper(controller: ArmController, arm: str = "both", wait: bool = True) -> bool:
     """
     关闭夹爪（设置为 0°）
 
@@ -258,9 +259,9 @@ def close_gripper(controller: ArmController, arm: str = "both", wait: bool = Fal
         arm: 控制哪个臂或 "both"
         wait: 是否等待完成
     """
-    return open_gripper(controller, angle_deg=100.0, arm=arm, wait=wait)
+    return open_gripper(controller, angle_deg=0.0, arm=arm, wait=wait)
 
-def print_joint_angles(controller: ArmController, arm: str = "both"):
+def print_joint_angles(controller: ArmController, arm: str = "both", read_gripper: bool=True):
     """
     打印当前关节角度（度）。
     """
@@ -270,6 +271,28 @@ def print_joint_angles(controller: ArmController, arm: str = "both"):
         right_deg = [round(a * controller.RAD_TO_DEG, 2) for a in joint_angles[1]]
         print(f"左臂关节角度: {left_deg}")
         print(f"右臂关节角度: {right_deg}")
+        if read_gripper:
+            print_gripper_angles(controller, arm)
     else:
         angles_deg = [round(a * controller.RAD_TO_DEG, 2) for a in joint_angles]
         print(f"{arm} 关节角度: {angles_deg}")
+        if read_gripper:
+            print_gripper_angles(controller, arm)
+
+def print_gripper_angles(controller: ArmController, arm: str = "both"):
+    """
+    打印当前关节夹爪角度（度）。（0~100度）
+    """
+    gripper_angles = controller.read_gripper_data(arm)
+    if arm == "both":
+        left_deg = round(gripper_angles[0] * controller.RAD_TO_DEG, 2)
+        right_deg = round(gripper_angles[1] * controller.RAD_TO_DEG, 2)
+        print(f"左夹爪角度: {left_deg}")
+        print(f"右夹爪角度: {right_deg}")
+        
+    else:
+        angles_deg = round(gripper_angles * controller.RAD_TO_DEG, 2)
+        if arm == 'left_arm':  
+            print(f"左夹爪角度: {angles_deg}")
+        else:
+            print(f"右夹爪角度: {angles_deg}")
