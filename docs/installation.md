@@ -46,9 +46,9 @@
 
 2.  运行 `read_angles.py` 示例：
     ```bash
-    python3 read_angles.py
+    python3 demo_read_state.py
     ```
-    如果一切配置正确，您应该能在终端看到持续输出的机械臂关节角度、夹爪角度和按钮状态。按 `Ctrl+C` 退出程序。
+    如果一切配置正确，您应该能在终端看到持续输出的机械臂关节角度和夹爪角度。按 `Ctrl+C` 退出程序。
 
 ## 故障排除
 

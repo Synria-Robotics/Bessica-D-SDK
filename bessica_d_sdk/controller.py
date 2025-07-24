@@ -598,9 +598,6 @@ class ArmController:
         frame[offset] = gripper_value & 0xFF  # 低字节
         frame[offset+1] = (gripper_value >> 8) & 0xFF  # 高字节
         
-        # 转换为硬件值
-        gripper_value = self._rad_to_hardware_value_grip(angle_rad)
-        
         # 计算并设置校验和
         frame[-2] = self._calculate_checksum(frame)
         

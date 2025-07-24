@@ -1,60 +1,49 @@
 # 示例代码说明
 
-`examples` 目录包含了一些演示如何使用 Bessica-D SDK 与机械臂交互的 Python 脚本。
+本目录包含使用 Bessica-D SDK 与机械臂交互的演示脚本，涵盖基本控制、状态读取、夹爪操作和示教功能。
 
 ## 如何运行示例
 
-1.  确保您已经按照 [安装指南](installation.md) 完成了 SDK 的安装和硬件连接。
+1.  确保您已完成 [安装指南](installation.md) 中的所有步骤。
 2.  打开终端或命令提示符。
-3.  导航到 `Bessica-D-SDK/examples/` 目录。
+3.  进入 `examples` 目录：
     ```bash
-    cd path/to/Bessica-D-SDK/examples
+    cd examples
     ```
-4.  使用 Python 3 运行所需的示例脚本：
+4.  运行某个示例：
     ```bash
-    python3 <example_script_name>.py
-    ```
-    例如，要运行 `read_angles.py`：
-    ```bash
-    python3 read_angles.py
+    python3 demo_read_state.py
     ```
 
-## 示例列表
+---
 
-### 1. `read_angles.py`
+## 示例脚本列表
 
-*   **文件**: [`examples/read_angles.py`](../examples/read_angles.py)
-*   **描述**: 此示例连接到机械臂并持续读取和显示所有六个关节的角度（单位：度）、夹爪的开合角度（单位：度）以及夹爪上两个按钮的状态。它还演示了如何启用调试模式以获取更详细的日志输出。
-*   **主要功能演示**:
-    *   初始化 [`ArmController`](../bessica_d_sdk/controller.py#L13) (可带 `debug_mode=True`)。
-    *   连接到机械臂 ([`controller.connect()`](../bessica_d_sdk/controller.py#L55))。
-    *   循环读取完整的关节状态 ([`controller.read_joint_state()`](../bessica_d_sdk/controller.py#L103))。
-    *   从 [`JointState`](../bessica_d_sdk/data_parser.py#L11) 对象中提取角度和按钮信息。
-    *   将弧度转换为度 ([`controller.RAD_TO_DEG`](../bessica_d_sdk/controller.py#L17))。
-    *   优雅地处理 `KeyboardInterrupt` (Ctrl+C) 以断开连接。
-    *   断开与机械臂的连接 ([`controller.disconnect()`](../bessica_d_sdk/controller.py#L63))。
+| 脚本文件 | 功能说明 |
+|----------|----------|
+| `demo_read_state.py` | 读取指定机械臂当前的关节角度和夹爪角度，支持持续输出 |
+| `demo_single_arm.py` | 控制单臂的七个关节：设置角度、归零、单关节操作 |
+| `demo_dual_arm.py` | 同步控制双臂的全部关节角度，可分别控制左右臂某个关节 |
+| `demo_gripper.py` | 控制夹爪开合角度，支持单/双臂夹爪设置和交互式输入 |
+| `demo_zero_calibration.py` | 关闭扭矩后手动拖拽，将当前位置设置为零点 |
+| `demo_interactivate_mode.py` | 综合控制界面，支持关节操作、夹爪控制、示教往复、扭矩开关等交互模式 |
 
-### 2. `arm_movement.py`
+---
 
-*   **文件**: [`examples/arm_movement.py`](../examples/arm_movement.py)
-*   **描述**: 此示例演示了如何控制机械臂进行多种类型的运动，包括将所有关节移动到零位、逐个关节测试、模拟波浪运动、力矩控制（启用/禁用）、设置当前位置为零点，以及一个完整的模拟抓取和放置过程。
-*   **主要功能演示**:
-    *   读取初始关节状态。
-    *   设置所有关节到指定角度 ([`controller.set_joint_angles()`](../bessica_d_sdk/controller.py#L115))。
-    *   角度单位转换 ([`controller.DEG_TO_RAD`](../bessica_d_sdk/controller.py#L16), [`controller.RAD_TO_DEG`](../bessica_d_sdk/controller.py#L17))。
-    *   禁用和启用关节力矩 ([`controller.disable_torque()`](../bessica_d_sdk/controller.py#L183), [`controller.enable_torque()`](../bessica_d_sdk/controller.py#L173))。
-    *   设置当前位置为零点 ([`controller.set_zero_position()`](../bessica_d_sdk/controller.py#L163))。
-    *   控制夹爪开合 ([`controller.set_gripper()`](../bessica_d_sdk/controller.py#L150))。
-    *   使用 `time.sleep()` 在动作之间添加延迟。
+## 推荐阅读顺序
 
-### 3. `gripper_control.py`
+1. `demo_read_state.py`：了解状态读取机制  
+2. `demo_single_arm.py`：学习单臂控制流程  
+3. `demo_dual_arm.py`：扩展到双臂控制  
+4. `demo_gripper.py`：掌握夹爪使用方式  
+5. `demo_zero_calibration.py`：了解零点设置方法  
+6. `demo_interactivate_mode.py`：实际部署或测试前的综合调试入口
 
-*   **文件**: [`examples/gripper_control.py`](../examples/gripper_control.py)
-*   **描述**: 此示例专注于控制机械臂的夹爪。它演示了如何将夹爪设置到完全打开、半闭合和完全闭合的位置，并读取夹爪的实际角度和按钮状态。此外，它还提供了一个交互模式，允许用户通过键盘输入来控制夹爪的角度。
-*   **主要功能演示**:
-    *   设置夹爪角度 ([`controller.set_gripper()`](../bessica_d_sdk/controller.py#L150))。
-    *   读取夹爪数据（角度和按钮状态）([`controller.read_gripper_data()`](../bessica_d_sdk/controller.py#L83))。
-    *   交互式用户输入处理。
-    *   在程序结束前将夹爪复位到打开状态。
+---
 
-这些示例是学习如何使用 Alicia Duo SDK 的良好起点。您可以修改它们或将相关代码集成到您自己的应用程序中。
+## 注意事项
+
+- 所有脚本均使用 `ArmController` 类作为控制入口。
+- 请确保运行前机械臂已正确连接并上电。
+- 在操作夹爪和归零前，请注意保持机械臂物理安全。
+

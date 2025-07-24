@@ -13,16 +13,9 @@ def main():
     arm = "right_arm"  # 可改为 "left_arm" 或 "both"
 
     try:
-        print("读取当前关节状态：")
-        print_joint_angles(controller, arm)
-        state = controller.read_joint_state(arm)
-        print(state.gripper)
-        # 如需持续读取状态（可选）
-        print("持续读取状态（按 Ctrl+C 停止）")
+        print("持续读取当前关节状态（按 Ctrl+C 停止）")
         while True:
-            print_joint_angles(controller, arm)
-            state = controller.read_joint_state(arm)
-            print(state.gripper*controller.RAD_TO_DEG) 
+            print_joint_angles(controller, arm) 
             time.sleep(0.5)
 
     except KeyboardInterrupt:
