@@ -83,14 +83,30 @@ def wait_for_valid_state(controller: ArmController, arm: str, timeout: float=5.0
 
 def move_to_zero(controller: ArmController, arm: str = None, interpolate: bool = True) -> bool:
     """
-    将指定机械臂或双臂移动到零位。
-    """   
+    将指定机械臂移动到零位 (新协议仅支持单臂控制帧)。
+    若 arm == 'both' 则依次对 left_arm 与 right_arm 执行。
+    interpolate=True 时使用插值逐步发送；否则直接一次到位。
+    """
     if not arm:
         logger.error(f"请输入指定要控制的机械臂，当前指定机械臂为{arm}")
         return False
-    
-    target = [[0.0] * 7, [0.0] * 7] if arm == "both" else [0.0] * 7
+
+    if arm == "both":
+        left_ok = move_to_zero(controller, 'left_arm', interpolate=interpolate)
+        right_ok = move_to_zero(controller, 'right_arm', interpolate=interpolate)
+        return left_ok and right_ok
+
+    if arm not in ["left_arm", "right_arm"]:
+        logger.error(f"arm 参数无效: {arm}")
+        return False
+
+    target = [0.0] * 7
     current = controller.read_joint_angles(arm)
+    # 可能状态线程尚未获得数据
+    if not current or len(current) != 7:
+        logger.warning(f"当前未获取到 {arm} 有效角度，直接发送零位")
+        return controller.set_joint_angles(joint_angles=target, arm=arm, wait_for_completion=True)
+
     if interpolate:
         return control_move(controller, current, target, arm=arm)
     else:

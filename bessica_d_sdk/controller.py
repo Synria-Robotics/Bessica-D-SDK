@@ -18,7 +18,6 @@ class ArmController:
     """机械臂控制模块"""
     
     # 常量定义
-    
     RAD_TO_DEG = 180.0 / math.pi  # 弧度转角度系数
     DEG_TO_RAD = math.pi / 180.0  # 角度转弧度系数
 
@@ -29,7 +28,6 @@ class ArmController:
     FRAME_MINIMAL_SIZE = 5
     ARM_DATA_SIZE = 21
     GRIPPER_FRAME_SIZE = 8
-
 
 
     # 指令ID
@@ -47,7 +45,7 @@ class ArmController:
     BOTH_ARM = 0x03
 
 
-    def __init__(self, port: str = "", baudrate: int = 921600, debug_mode: bool = False):
+    def __init__(self, port: str = "", baudrate: int = 1000000, debug_mode: bool = False, poll_mode: bool = True):
         """
         初始化机械臂控制器
         
@@ -55,8 +53,10 @@ class ArmController:
             port: 串口名称，留空则自动搜索
             baudrate: 波特率
             debug_mode: 是否启用调试模式
+            poll_mode: True 表示响应式协议，需要主动发送请求帧获取当前关节状态
         """
         self.debug_mode = debug_mode
+        self.poll_mode = poll_mode  # 新增: 是否主动轮询请求状态
         self._lock = threading.Lock()
 
         # 创建串口通信模块和数据解析器
@@ -64,13 +64,12 @@ class ArmController:
         self.data_parser = DataParser(lock=self._lock, debug_mode=debug_mode)
         
         # 舵机数量
-        self.servo_count = 10
+        self.servo_count = 9
         self.joint_count = 7
         
         self.count = 0
         self.joint_to_servo_map = [
-            (0, -1.0),    # 关节1 -> 舵机1 (正向)
-            (0, -1.0),    # 关节1 -> 舵机2 (正向)
+            (0, 1.0),    # 关节1 -> 舵机1 (正向)
             (1, 1.0),    # 关节2 -> 舵机3 (正向)
             (1, -1.0),   # 关节2 -> 舵机4 (反向)
             (2, 1.0),    # 关节3 -> 舵机5 (正向)
@@ -83,8 +82,8 @@ class ArmController:
 
         # 方向因子：正方向与右臂一致，若左臂需要反向则为 -1
         self.direction_map = {
-            "left_arm":  [1, 1, 1, 1, 1, -1, 1],  
-            "right_arm": [-1, 1, -1, 1, -1, -1, 1]      
+            "left_arm":  [1, 1, 1, 1, 1, 1, 1],
+            "right_arm": [1, 1, 1, 1, 1, 1, 1]
         }
 
         # 状态更新线程相关
@@ -213,26 +212,31 @@ class ArmController:
             "stop_flag_set": self._stop_thread.is_set()
         }
     
+    def _send_joint_state_request(self, arm: str = 'both'):
+        """发送关节状态请求帧 (响应式协议)
+        新协议: 请求帧固定 0xAA 0x06 0x01 0x00 0x00 0xFF
+        说明: LEN=0x01, DATA区仅1字节(此处恒 0x00 占位), 校验=0x00
+        arm 参数保留仅为兼容旧接口, 不再区分左右/双臂
+        """
+        frame = [self.FRAME_HEADER, self.CMD_DUAL_ARM, 0x01, 0x00, 0x00, self.FRAME_FOOTER]
+        return self.serial_comm.send_data(frame)
+
     def _update_loop(self):
-        """状态更新线程主循环"""
+        """状态更新线程主循环 (支持响应式轮询)"""
         logger.info("状态更新线程开始运行")
         while not self._stop_thread.is_set():
             time.sleep(self.read_interval)
             try:
+                if self.poll_mode:
+                    # 主动请求关节状态
+                    self._send_joint_state_request('both')
                 with self._lock:
                     frame = self.serial_comm.read_frame()
-
-                if frame == 9999999:
-                        logger.error("串口读取异常，线程终止")
-                        break
-                
-                if frame:
-                        self.data_parser.parse_frame(frame)
-                   
+                if frame and frame != 9999999:
+                    self.data_parser.parse_frame(frame)
             except Exception as e:
                 logger.error(f"状态线程异常：{e}")
                 break
-            
         self._thread_running = False
         logger.info("状态更新线程结束")
 
@@ -513,48 +517,46 @@ class ArmController:
     def _build_joint_frame(self, 
                        joint_angles: List[float],
                        arm: str = None) -> List[int]:
-                       
+        """构建单臂关节控制帧 (新协议)
+        协议: AA 06 LEN IDENT DATA(7*2B) CHECK FF
+          IDENT: 0x01 右臂 / 0x02 左臂
+          LEN = 1(IDENT) + 14(DATA) = 0x0F
+          DATA: 7个关节，每关节 2 字节 little-endian (value 0-4095)
+          CHECK = (IDENT + sum(DATA字节)) % 2
+        joint_angles: 目标关节角（弧度）长度=7
+        arm: 'left_arm' / 'right_arm'
         """
-        构建关节控制帧（支持单臂或双臂）
-
-        Args:
-            joint_angles: 
-                - 若 arm 为 None，则应为 [[left_arm], [right_arm]]
-                - 否则应为 1 个包含 7 个关节角度的列表
-            arm: 指定控制的手臂，"left_arm"、"right_arm"，或 both（表示双臂）
-
-        Returns:
-            List[int]: 控制帧字节列表
-        """
-
-        # === 准备通用帧头结构 ===
-        frame_size = self.ARM_DATA_SIZE + self.FRAME_MINIMAL_SIZE #[左右臂识别字节(1) + 舵机字节(20)] + 通用字节(5)
-        frame = [0] * frame_size
+        if arm not in ['left_arm','right_arm']:
+            logger.error(f"关节控制需指定单臂(left_arm/right_arm)，当前: {arm}")
+            return []
+        if len(joint_angles) != 7:
+            logger.error(f"关节角数量应为7，当前: {len(joint_angles)}")
+            return []
+        # IDENT 约定: 0x01 = LEFT_ARM(left_arm), 0x02 = RIGHT_ARM(right_arm)
+        ident = 0x01 if arm == 'left_arm' else 0x02
+        # 方向映射
+        mapped = [joint_angles[i] * self.direction_map[arm][i] for i in range(7)]
+        # 转换为硬件值
+        data_bytes: List[int] = []
+        for ang in mapped:
+            v = self._rad_to_hardware_value(ang)
+            data_bytes.append(v & 0xFF)
+            data_bytes.append((v >> 8) & 0xFF)
+        length = 1 + len(data_bytes)  # IDENT + DATA
+        frame = [0] * (length + 5)  # 头 指令 长度 IDENT+DATA 校验 尾
         frame[0] = self.FRAME_HEADER
         frame[1] = self.CMD_DUAL_ARM
-        frame[2] = self.ARM_DATA_SIZE
+        frame[2] = length
+        frame[3] = ident
+        # 写入 DATA
+        for i, b in enumerate(data_bytes):
+            frame[4 + i] = b
+        # 计算校验
+        checksum = (ident + sum(data_bytes)) % 2
+        frame[-2] = checksum
         frame[-1] = self.FRAME_FOOTER
-        
-        if arm == 'left_arm':
-            frame[3] = self.LEFT_ARM
-        elif arm == 'right_arm':
-            frame[3] = self.RIGHT_ARM
-
-        offset = 4      # 数据从第四位开始
-        for servo_idx, (joint_idx, direction) in enumerate(self.joint_to_servo_map):
-            angle_rad = joint_angles[joint_idx] * direction
-            value = self._rad_to_hardware_value(angle_rad)
-
-            frame[offset + servo_idx * 2] = value & 0xFF
-            frame[offset + servo_idx * 2 + 1] = (value >> 8) & 0xFF
-
-        frame[-2] = self._calculate_checksum(frame)
-
-        # === 日志打印 ===
         if self.debug_mode:
-            logger.debug(f"发送关节角度 (度): "
-                        f"{arm}关节角度: {[round(a * self.RAD_TO_DEG, 1) for a in joint_angles]}")
-   
+            logger.debug(f"构建关节帧 {arm} angles(deg)={[round(a * self.RAD_TO_DEG, 1) for a in joint_angles]}")
         return frame
 
 
@@ -710,4 +712,3 @@ class ArmController:
         
         # 对2取模
         return checksum % 2
-    

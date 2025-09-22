@@ -16,14 +16,14 @@ def main():
         move_to_zero(controller,arm)
 
         # 1. 设置全部7个关节角度
-        target_angles = [10, 20, 30, 0, 45, -15, 5]
+        target_angles = [10, 30, 30, 0, 45, -15, 5]
         print(f"设置 {arm} 所有关节角度为: {target_angles}")
         move_joints(controller, target_angles, arm)
         time.sleep(2)
 
         # 2. 设置单个关节角度（关节 2）
         joint_id = 2
-        target_angle = 60
+        target_angle = 80
         print(f"设置 {arm} 第 {joint_id} 个关节为 {target_angle} 度")
         move_joint(controller, joint_id, target_angle, arm)
         time.sleep(2)

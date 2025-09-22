@@ -12,13 +12,15 @@ import json
 logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("SerialComm")
-DEFAULT_LENGTH = 5
-FRAME_LENGTH = 50
-
+DEFAULT_LENGTH = 6   # 头(1)+指令(1)+长度(1)+识别(1)+校验(1)+尾(1)
+FRAME_LENGTH = 34
+FRAME_HEADER = 0xAA
+FRAME_TAIL = 0xFF
+    
 class SerialComm:
     """机械臂串口通信模块 - 简化版"""
     
-    def __init__(self, lock: threading.Lock, port: str = "", baudrate: int = 921600, 
+    def __init__(self, lock: threading.Lock, port: str = "", baudrate: int = 1000000, 
                 timeout: float = 1.0, debug_mode: bool = False):
         """
         初始化串口通信模块
@@ -42,6 +44,10 @@ class SerialComm:
 
         self._lock = lock
         self._rx_buffer = bytearray()
+        self._frame_fail_count = 0  # 新增: 帧校验失败计数器
+        # 最小发送间隔(秒)，要求>=2ms
+        self._min_send_interval = 0.003
+        self._last_send_time = 0.0  # perf_counter 时间戳
 
         logger.info(f"初始化串口通信模块: 端口={port or '自动'}, 波特率={baudrate}")
         logger.info(f"调试模式: {'启用' if debug_mode else '禁用'}")
@@ -194,18 +200,25 @@ class SerialComm:
                         logger.error("无法连接到串口")
                         return False
                 
+                # 节流：保证两帧发送间隔 >= _min_send_interval
+                if self._last_send_time > 0:
+                    now = time.perf_counter()
+                    gap = now - self._last_send_time
+                    if gap < self._min_send_interval:
+                        time.sleep(self._min_send_interval - gap)
                 # 转换为字节数组
                 data_bytes = bytes(data)
                 
                 # 写入数据
                 bytes_written = self.serial_port.write(data_bytes)
-                
                 if bytes_written != len(data):
                     logger.warning(f"只写入了 {bytes_written} 字节，应为 {len(data)} 字节")
                     return False
                 
-                if self.debug_mode:
-                    self._print_hex_frame(data, 0)     
+                # 记录时间戳
+                self._last_send_time = time.perf_counter()
+                # 无条件打印发送帧
+                self._print_hex_frame(data, 0)
                 return True
                     
             except Exception as e:
@@ -215,7 +228,13 @@ class SerialComm:
 
     def read_frame(self) -> Optional[List[int]]:
         """
-        解码一帧串口数据（支持粘包解帧，带异常恢复与缓存保护）
+        按新协议解码一帧:
+        Frame = 0xAA | CMD | LEN | IDENT | DATA[LEN] | CHECK | 0xFF
+        CHECK = (IDENT + sum(DATA)) % 2
+        返回:
+          成功: List[int]
+          暂无: None
+          异常: None
         """
         try:
             if not self.serial_port or not self.serial_port.is_open:
@@ -225,67 +244,104 @@ class SerialComm:
             if self.serial_port.in_waiting == 0:
                 return None
 
+            # 读入全部等待字节
             self._rx_buffer += self.serial_port.read(self.serial_port.in_waiting)
 
-            while len(self._rx_buffer) >= FRAME_LENGTH:
-                # Step 1: 同步到帧头 0xAA
-                if self._rx_buffer[0] != 0xAA:
+            # 循环尝试解帧（支持粘包）
+            while True:
+                # 至少需要 4 字节才能读到 LEN (AA CMD LEN IDENT)
+                if len(self._rx_buffer) < 4:
+                    break
+
+                # 同步帧头
+                if self._rx_buffer[0] != FRAME_HEADER:
                     self._rx_buffer.pop(0)
                     continue
 
-                candidate = self._rx_buffer[:FRAME_LENGTH]
+                # 读取长度字段（数据区长度）
+                data_len = self._rx_buffer[2]
+                total_len = data_len + DEFAULT_LENGTH  # 动态帧总长
 
-                # Step 2: 验证帧尾和校验
-                valid_tail = candidate[-1] == 0xFF
-                valid_checksum = self._serial_data_check(candidate)
+                # 数据还不完整，等待更多字节
+                if len(self._rx_buffer) < total_len:
+                    break
 
-                parsed = {
-                "timestamp": datetime.now().isoformat(),
-                "raw": ' '.join(f"{b:02X}" for b in candidate),
-                "raw_decimal": list(candidate),
-                "valid": valid_tail and valid_checksum
-            }
-                
+                candidate = self._rx_buffer[:total_len]
+
+                # 基本尾字节检查
+                tail_ok = candidate[-1] == FRAME_TAIL
+                valid = tail_ok and self._serial_data_check(candidate)
+
                 if self.debug_mode:
                     now = time.time()
-                    if self.debug_mode and now - self._last_print_time > 1.0:
-                        print(f"[Frame] {parsed['raw_decimal']} {'(OK)' if parsed['valid'] else '(Invalid)'}")
+                    if now - self._last_print_time > 1.0:
+                        print(f"[Frame] {list(candidate)} {'(OK)' if valid else '(Invalid)'}")
                         self._last_print_time = now
 
-                self._rx_buffer = self._rx_buffer[FRAME_LENGTH:]
+                # 无论是否有效，都弹出本帧长度，避免卡死
+                self._rx_buffer = self._rx_buffer[total_len:]
 
-                # Step 4: 若缓存过大，强制同步（防炸）
-                if len(self._rx_buffer) > 1000:
-                    aa_index = self._rx_buffer.find(0xAA)
-                    if aa_index == -1:
+                if valid:
+                    # 用户当前需求: 仅打印发送数据, 不打印接收帧
+                    # 若后续需要调试接收, 可临时解除下面注释
+                    # self._print_hex_frame(list(candidate), 1)
+                    return list(candidate)
+                else:
+                    if not hasattr(self, '_frame_fail_count'):
+                        self._frame_fail_count = 0
+                    self._frame_fail_count += 1
+                    # 继续下一轮（可能后面还有粘包）
+
+                # 安全阈值：缓存过大时尝试丢弃到下一个 0xAA
+                if len(self._rx_buffer) > 4096:
+                    idx = self._rx_buffer.find(FRAME_HEADER)
+                    if idx <= 0:
                         self._rx_buffer.clear()
                     else:
-                        self._rx_buffer = self._rx_buffer[aa_index:]
+                        self._rx_buffer = self._rx_buffer[idx:]
 
-                if parsed["valid"]:
-                    self._rx_buffer.clear()
-                    return candidate
-                
+            return None
+
         except Exception as e:
-            logger.error(f"读取数据异常: {str(e)}")
+            logger.error(f"读取数据异常: {e}")
+            if not hasattr(self, '_frame_fail_count'):
+                self._frame_fail_count = 0
             self._frame_fail_count += 1
-            return 9999999
-
+            return None
 
     def _serial_data_check(self, frame: bytearray) -> bool:
-        data_len = frame[2]
-        if len(frame) != data_len + DEFAULT_LENGTH:
+        """
+        校验单帧:
+          长度匹配
+          头尾正确
+          校验位 = (IDENT + sum(DATA)) % 2
+        """
+        if len(frame) < DEFAULT_LENGTH:
+            return False
+        if frame[0] != FRAME_HEADER or frame[-1] != FRAME_TAIL:
             return False
 
-        payload = frame[3:3 + data_len]
-        checksum = frame[3 + data_len]
-        return checksum == self._calculate_checksum(payload)
-    
-    def _calculate_checksum(self,data) -> int:
-        sum_value = 0
-        for i in range(len(data)):
-            sum_value += data[i]
-        return sum_value % 2
+        cmd = frame[1]
+        data_len = frame[2]
+        ident = frame[3]
+
+        expected_len = data_len + DEFAULT_LENGTH
+        if len(frame) != expected_len:
+            return False
+
+        data_start = 4
+        data_end = data_start + data_len
+        payload = frame[data_start:data_end]
+        checksum = frame[-2]
+
+        return checksum == self._calculate_checksum(ident, payload)
+
+    def _calculate_checksum(self, ident: int, data: bytes | bytearray | List[int]) -> int:
+        """
+        新校验算法: (IDENT + sum(DATA)) % 2
+        """
+        return (ident + sum(data)) % 2
+
     
     def _sum_elements(self, data: List[int]) -> int:
         """
@@ -316,17 +372,14 @@ class SerialComm:
             data: 数据帧
             type_code: 0=发送数据, 1=接收数据, 其他=部分数据
         """
-        if not self.debug_mode:
+        # 过滤不需要打印的特定请求帧
+        if type_code == 0 and (
+            data == [0xAA,0x06,0x01,0x00,0x00,0xFF] or  # LEN=1 版本
+            data == [0xAA,0x06,0x00,0x00,0x00,0xFF]     # LEN=0 版本
+        ):
             return
-        
-        prefix = {
-            0: "发送数据: ",
-            1: "数据接收: ",
-            2: "部分数据: "
-        }.get(type_code, "未知数据: ")
-        
+        prefix = {0: "发送数据: ", 1: "接收数据: ", 2: "部分数据: "}.get(type_code, "未知数据: ")
         hex_str = " ".join([f"{byte:02X}" for byte in data])
-        now = time.time()
-        self._last_print_time
-        logger.info(f"{prefix}{hex_str}")
+        ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]  # 毫秒级时间戳
+        print(f"[{ts}] {prefix}{hex_str}")
 

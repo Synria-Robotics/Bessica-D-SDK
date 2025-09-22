@@ -34,12 +34,12 @@ def main():
 
         # 3. 设置夹爪角度（单臂）
         print("设置右臂夹爪角度为 60")
-        set_gripper_angle(controller, 60, arm="right_arm")
+        set_gripper_angle(controller, 100, arm="right_arm")
         print_gripper_angles(controller, arm="right_arm")
 
         # 4. 设置双臂夹爪角度
         print("设置双臂夹爪角度，左=30，右=70")
-        set_dual_gripper(controller, left_deg=30, right_deg=70)
+        set_dual_gripper(controller, left_deg=30, right_deg=30)
         print_gripper_angles(controller, arm="both")
 
          # 5. 交互式控制
