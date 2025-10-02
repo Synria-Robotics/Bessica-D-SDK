@@ -218,7 +218,7 @@ class SerialComm:
                 # 记录时间戳
                 self._last_send_time = time.perf_counter()
                 # 无条件打印发送帧
-                self._print_hex_frame(data, 0)
+                #self._print_hex_frame(data, 0)
                 return True
                     
             except Exception as e:
@@ -373,11 +373,11 @@ class SerialComm:
             type_code: 0=发送数据, 1=接收数据, 其他=部分数据
         """
         # 过滤不需要打印的特定请求帧
-        if type_code == 0 and (
-            data == [0xAA,0x06,0x01,0x00,0x00,0xFF] or  # LEN=1 版本
-            data == [0xAA,0x06,0x00,0x00,0x00,0xFF]     # LEN=0 版本
-        ):
-            return
+        #if type_code == 0 and (
+        #    data == [0xAA,0x06,0x01,0x00,0x00,0xFF] or  # LEN=1 版本
+         #   data == [0xAA,0x06,0x00,0x00,0x00,0xFF]     # LEN=0 版本
+        #):
+          #  return
         prefix = {0: "发送数据: ", 1: "接收数据: ", 2: "部分数据: "}.get(type_code, "未知数据: ")
         hex_str = " ".join([f"{byte:02X}" for byte in data])
         ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]  # 毫秒级时间戳

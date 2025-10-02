@@ -45,7 +45,7 @@ class ArmController:
     BOTH_ARM = 0x03
 
 
-    def __init__(self, port: str = "", baudrate: int = 1000000, debug_mode: bool = False, poll_mode: bool = True):
+    def __init__(self, port: str = "COM10", baudrate: int = 1000000, debug_mode: bool = False, poll_mode: bool = True):
         """
         初始化机械臂控制器
         
@@ -258,10 +258,30 @@ class ArmController:
         joint_states = self.data_parser.get_joint_state()
 
         if arm == 'both':
-            return [joint_states['left_arm'].angles ,
+            # 确保返回顺序固定 [left, right]
+            return [joint_states['left_arm'].angles,
                     joint_states['right_arm'].angles]
         else:
             return joint_states[arm].angles
+
+    def set_block_order(self, order: Tuple[str, str]):
+        """设置底层解析器双臂数据块顺序。
+        默认固件顺序可能为 ("right_arm","left_arm")，如果拖拽示教出现左右互换，可调用：
+            controller.set_block_order(("left_arm","right_arm"))
+        """
+        if not isinstance(order, tuple) or len(order) != 2:
+            logger.error(f"block_order 必须是长度为2的元组, 当前: {order}")
+            return False
+        if set(order) != {"left_arm","right_arm"}:
+            logger.error(f"block_order 只允许包含 left_arm / right_arm, 当前: {order}")
+            return False
+        try:
+            self.data_parser.block_order = order
+            logger.info(f"已更新解析 block_order = {order}")
+            return True
+        except Exception as e:
+            logger.error(f"更新 block_order 失败: {e}")
+            return False
 
 
     def read_gripper_data(self, arm: str = 'both') -> Union[float, Tuple[float, float]]:
@@ -353,7 +373,7 @@ class ArmController:
                     angles_now = self.data_parser.get_joint_state(arm).angles
                     if all(abs(angles_now[i] - mapped_angles[i]) <= tolerance for i in range(self.joint_count)):
                         break
-                    time.sleep(0.02)
+                    time.sleep(0.01)
 
                 if time.time() - start_time >= timeout:
                     logger.warning(f"{arm} 等待到位超时")
@@ -408,7 +428,7 @@ class ArmController:
                 if self.debug_mode:
                     logger.debug(f"{arm} 夹爪已到达目标位置")
                 return True
-            time.sleep(0.02)
+            time.sleep(0.01)
 
         logger.warning(f"{arm} 夹爪运动完成超时")
         return False

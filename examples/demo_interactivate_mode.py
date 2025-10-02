@@ -34,10 +34,13 @@ def select_arm():
         return 'right_arm'
 
 def teaching_mode(controller: ArmController):
+    # 如果发现“选择左臂却记录的是右臂”可在运行时调用：
+    # controller.set_block_order(("left_arm","right_arm"))
+    # 这会告诉解析器第一块14字节属于左臂。
     arm = select_arm()
     loop_mode = input("是否让机械臂在两个点间往复运动？(y/n): ").strip().lower() == 'y'
 
-    print("记录当前关节角度...")
+    print("记录当前关节角度... (若左右颠倒, 先 Ctrl+C 退出后调用 set_block_order 调整)")
     if arm != "both":
         start_pose = [a * controller.RAD_TO_DEG for a in controller.read_joint_angles(arm)]
     else:
