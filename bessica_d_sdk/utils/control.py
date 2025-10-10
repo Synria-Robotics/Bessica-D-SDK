@@ -23,8 +23,8 @@ def control_move(controller: ArmController,
                  current_angles: Union[List[float], List[List[float]]],
                  target_angles: Union[List[float], List[List[float]]],
                  arm: str,
-                 steps: int = 200,
-                 delay: float = 0.02) -> bool:
+                 steps: int = 300,
+                 delay: float = 0.004) -> bool:
     """
     缓慢插值移动机械臂到目标角度（支持单臂或双臂）
 

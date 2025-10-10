@@ -41,6 +41,7 @@ def teaching_mode(controller: ArmController):
     loop_mode = input("是否让机械臂在两个点间往复运动？(y/n): ").strip().lower() == 'y'
 
     print("记录当前关节角度... (若左右颠倒, 先 Ctrl+C 退出后调用 set_block_order 调整)")
+    controller.set_block_order(("left_arm","right_arm"))
     if arm != "both":
         start_pose = [a * controller.RAD_TO_DEG for a in controller.read_joint_angles(arm)]
     else:
