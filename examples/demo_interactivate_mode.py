@@ -19,8 +19,8 @@ import select
 
 def select_arm():
     print("\n请选择控制的机械臂：")
-    print("1. 左臂 (left_arm)")
-    print("2. 右臂 (right_arm)")
+    print("1. 左臂 ")
+    print("2. 右臂 ")
     print("3. 双臂 (both)")
     choice = input("请输入编号 (1/2/3): ").strip()
     if choice == '1':
@@ -115,7 +115,8 @@ def main():
         print("6. 扭矩开关控制")
         print("7. 回到零点")
         print("8. 拖拽示教模式")
-        print("9. 退出")
+        print("9. 云台控制 (X/Y)")
+        print("10. 退出")
         choice = input("请输入操作编号：").strip()
 
         if choice == '1':
@@ -234,6 +235,20 @@ def main():
             teaching_mode(controller)
 
         elif choice == '9':
+            try:
+                mode = input("选择模式: 1=设置角度(度)  2=回中心(0,0): ").strip()
+                if mode == '2':
+                    ok = controller.set_gimbal_deg(0.0, 0.0)
+                    print(f"云台回中心: {'成功' if ok else '失败'}")
+                else:
+                    x_deg = float(input("输入 X 轴角度(度, -180~180): ").strip())
+                    y_deg = float(input("输入 Y 轴角度(度, -180~180): ").strip())
+                    ok = controller.set_gimbal_deg(x_deg, y_deg)
+                    print(f"设置云台 X={x_deg}°, Y={y_deg}°: {'成功' if ok else '失败'}")
+            except ValueError:
+                print("非法输入：请输入数字")
+
+        elif choice == '10':
             print("退出程序")
             break
 

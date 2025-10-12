@@ -11,7 +11,7 @@ def main():
         return
 
     arm = "left_arm"  # 目标单臂 (left_arm/right_arm)
-
+    controller.set_block_order(("left_arm", "right_arm"))
     try:
         move_to_zero(controller,arm)
 

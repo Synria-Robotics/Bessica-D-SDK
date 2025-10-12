@@ -89,9 +89,16 @@ class DataParser:
         data_len = frame[2]
         
         # 验证数据长度
-        if len(frame) != data_len + 6:  # 帧头(1) + 指令ID(1) + 长度(1) + 数据(n) + 校验(1) + 帧尾(1)
+        # 兼容两种格式：
+        # A) 旧格式：LEN=DATA，仅数据，不含参数(ident) → 总长应为 LEN + 6（含 头/指令/长度/参数/校验/尾）
+        # B) 新格式：LEN=参数+数据 → 总长应为 LEN + 5（含 头/指令/长度/校验/尾）
+        total_len = len(frame)
+        ok_len = (total_len == data_len + 6) or (total_len == data_len + 5)
+        if not ok_len:
             if self.debug_mode:
-                logger.warning(f"数据长度不匹配: 预期 {data_len + 5}, 实际 {len(frame)}")
+                logger.warning(
+                    f"数据长度不匹配: LEN=0x{data_len:02X} 实际总长={total_len}, 期望之一=[LEN+6={data_len+6}, LEN+5={data_len+5}]"
+                )
             return None
         
         # 校验和验证
@@ -142,8 +149,13 @@ class DataParser:
                 logger.warning(f"关节数据类型错误: ident=0x{frame[3]:02X}")
                 return None
             data_len = frame[2]
-            if data_len not in (self.JOINT_DATA_SIZE_V1, self.JOINT_DATA_SIZE_V2):
-                logger.warning(f"不支持的数据长度: {data_len}")
+            # 规范化有效载荷长度（不含 ident/参数）
+            if data_len in (self.JOINT_DATA_SIZE_V1, self.JOINT_DATA_SIZE_V2):
+                payload_len = data_len  # 旧格式：LEN=DATA
+            elif (data_len - 1) in (self.JOINT_DATA_SIZE_V1, self.JOINT_DATA_SIZE_V2):
+                payload_len = data_len - 1  # 新格式：LEN=IDENT+DATA
+            else:
+                logger.warning(f"不支持的数据长度: 0x{data_len:02X}")
                 return None
 
             data_start = 4  # DATA 起始
@@ -151,7 +163,7 @@ class DataParser:
             block1 = frame[data_start : data_start + per_arm_bytes]
             block2 = frame[data_start + per_arm_bytes : data_start + 2 * per_arm_bytes]
             gripper_block = None
-            if data_len == self.JOINT_DATA_SIZE_V2:
+            if payload_len == self.JOINT_DATA_SIZE_V2:
                 gripper_block = frame[data_start + 2 * per_arm_bytes : data_start + 2 * per_arm_bytes + self.GRIPPER_PAIR_BYTES]
 
             if len(block1) != per_arm_bytes or len(block2) != per_arm_bytes:
@@ -217,7 +229,7 @@ class DataParser:
                 "right_arm_angle": self._joint_states['right_arm'].angles,
                 "left_gripper": self._joint_states['left_arm'].gripper,
                 "right_gripper": self._joint_states['right_arm'].gripper,
-                "protocol_version": 2 if data_len == self.JOINT_DATA_SIZE_V2 else 1
+                "protocol_version": 2 if payload_len == self.JOINT_DATA_SIZE_V2 else 1
             }
         except Exception as e:
             logger.error(f"解析关节数据异常: {e}")

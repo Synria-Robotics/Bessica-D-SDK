@@ -218,7 +218,7 @@ class SerialComm:
                 # 记录时间戳
                 self._last_send_time = time.perf_counter()
                 # 无条件打印发送帧
-                self._print_hex_frame(data, 0)
+               # self._print_hex_frame(data, 0)
 
                 return True
                     

@@ -35,6 +35,7 @@ class ArmController:
     CMD_ZERO_POS = 0x03    # 机械臂以当前位置为零点  
     CMD_DUAL_ARM = 0x06   # 双臂角度反馈与控制
     CMD_TORQUE = 0x13      # 机械臂力矩控制
+    CMD_GIMBAL = 0x14      # 云台角度控制 (X/Y)
 
     # 识别帧
     PRESENT_POSITION = 0x38 #当前机械臂关节角度识别帧
@@ -432,6 +433,62 @@ class ArmController:
 
         logger.warning(f"{arm} 夹爪运动完成超时")
         return False
+
+    # ======================== 云台控制 ========================
+    def set_gimbal(self,
+                   x_angle_rad: float,
+                   y_angle_rad: float,
+                   wait_for_completion: bool = False,
+                   timeout: float = 5.0,
+                   tolerance: float = 0.05) -> bool:
+        """
+        设置云台 X/Y 轴角度（单位：弧度）。
+
+        协议: AA 14 04 X_L X_H Y_L Y_H CHECK FF
+        - 指令: 0x14
+        - 数据长度: 0x04
+        - 数据: X(2B, 小端) + Y(2B, 小端)
+        - 校验: 从第3字节到倒数第3字节的和，对2取模
+        """
+        # 基本校验
+        if not isinstance(x_angle_rad, (int, float)) or not isinstance(y_angle_rad, (int, float)):
+            logger.error("set_gimbal: 角度应为 float 类型")
+            return False
+
+        frame = self._build_gimbal_frame(x_angle_rad, y_angle_rad)
+        ok = self.serial_comm.send_data(frame)
+
+        # 可选等待到位（当 DataParser 实现 get_gimbal_state 时生效）
+        if wait_for_completion and ok and hasattr(self.data_parser, "get_gimbal_state"):
+            t0 = time.time()
+            while time.time() - t0 < timeout:
+                try:
+                    gs = self.data_parser.get_gimbal_state()  # 期望返回 (x_rad, y_rad)
+                    if gs is not None:
+                        pan, tilt = gs
+                        if abs(pan - x_angle_rad) <= tolerance and abs(tilt - y_angle_rad) <= tolerance:
+                            return True
+                except Exception:
+                    pass
+                time.sleep(0.02)
+            logger.warning("set_gimbal: 等待到位超时")
+            return False
+
+        return ok
+
+    def set_gimbal_deg(self,
+                       x_angle_deg: float,
+                       y_angle_deg: float,
+                       wait_for_completion: bool = False,
+                       timeout: float = 5.0,
+                       tolerance: float = 0.05) -> bool:
+        """按角度(度)设置云台 X/Y 轴角度。"""
+        return self.set_gimbal(x_angle_deg * self.DEG_TO_RAD,
+                               y_angle_deg * self.DEG_TO_RAD,
+                               wait_for_completion=wait_for_completion,
+                               timeout=timeout,
+                               tolerance=tolerance)
+
     
     def set_zero_position(self, arm:str) -> bool:
         """
@@ -732,3 +789,32 @@ class ArmController:
         
         # 对2取模
         return checksum % 2
+
+    def _build_gimbal_frame(self, x_angle_rad: float, y_angle_rad: float) -> List[int]:
+        """
+        构建云台角度控制帧
+        帧格式: AA 14 04 X_L X_H Y_L Y_H CHECK FF
+        """
+        # 复用关节角度的硬件编码（-180~+180 -> 0~4095；0度为2048）
+        x_val = self._rad_to_hardware_value(x_angle_rad)
+        y_val = self._rad_to_hardware_value(y_angle_rad)
+
+        # 总长度: 数据4 + 固定5 = 9 字节
+        frame = [0] * (4 + self.FRAME_MINIMAL_SIZE)
+        frame[0] = self.FRAME_HEADER
+        frame[1] = self.CMD_GIMBAL
+        frame[2] = 0x04  # 数据长度
+        # X 轴 (小端)
+        frame[3] = x_val & 0xFF
+        frame[4] = (x_val >> 8) & 0xFF
+        # Y 轴 (小端)
+        frame[5] = y_val & 0xFF
+        frame[6] = (y_val >> 8) & 0xFF
+        # 帧尾与校验
+        frame[-1] = self.FRAME_FOOTER
+        frame[-2] = self._calculate_checksum(frame)
+        if self.debug_mode:
+            logger.debug(f"构建云台帧 X={x_angle_rad*self.RAD_TO_DEG:.1f}°, Y={y_angle_rad*self.RAD_TO_DEG:.1f}° -> x={x_val}, y={y_val}")
+        return frame
+
+
