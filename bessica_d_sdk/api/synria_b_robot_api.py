@@ -126,98 +126,98 @@ class SynriaBessicaRobotAPI:
         #control_move(self.servo_driver, target_joints, arm=arm)
         #return True
 
-    # def set_pose_target(self,
-    #                      target_pose: List[float],
-    #                      backend: str = 'numpy',
-    #                      method: str = 'dls', 
-    #                      display: bool = True, 
-    #                      tolerance: float = 1e-4, 
-    #                      max_iters: int = 100, 
-    #                      multi_start: int = 0, 
-    #                      use_random_init: bool = False, 
-    #                      speed_factor: float = 1.0, 
-    #                      arm: str = "both",
-    #                      execute: bool = True) -> Dict:
-    #     """基于逆解将末端移动到目标位姿。
+    def set_pose_target(self,
+                         target_pose: List[float],
+                         backend: str = 'numpy',
+                         method: str = 'dls', 
+                         display: bool = True, 
+                         tolerance: float = 1e-4, 
+                         max_iters: int = 100, 
+                         multi_start: int = 0, 
+                         use_random_init: bool = False, 
+                         speed_factor: float = 1.0, 
+                         arm: str = "both",
+                         execute: bool = True) -> Dict:
+        """基于逆解将末端移动到目标位姿。
 
-    #     :param target_pose: 目标位姿 [x, y, z, qx, qy, qz, qw]
-    #     :param backend: 'numpy' 或 'torch'
-    #     :param method: 'dls'/'pinv'/'transpose'
-    #     :param display: 是否打印求解细节
-    #     :param tolerance: 位置与姿态容差
-    #     :param max_iters: 最大迭代次数
-    #     :param multi_start: 多起点尝试次数
-    #     :param use_random_init: 是否使用随机初值
-    #     :param speed_factor: 运动速度因子（用于插值）
-    #     :param execute: 是否执行得到的关节解
-    #     :return: 包含 success/q/iters/pos_err/ori_err/message/motion_executed 等字段
-    #     """
-    #     if not hasattr(self, 'robot_model') or self.robot_model is None:
-    #         return {
-    #             'success': False,
-    #             'message': '未提供 robot_model，无法求解 IK',
-    #             'q': None
-    #         }
+        :param target_pose: 目标位姿 [x, y, z, qx, qy, qz, qw]
+        :param backend: 'numpy' 或 'torch'
+        :param method: 'dls'/'pinv'/'transpose'
+        :param display: 是否打印求解细节
+        :param tolerance: 位置与姿态容差
+        :param max_iters: 最大迭代次数
+        :param multi_start: 多起点尝试次数
+        :param use_random_init: 是否使用随机初值
+        :param speed_factor: 运动速度因子（用于插值）
+        :param execute: 是否执行得到的关节解
+        :return: 包含 success/q/iters/pos_err/ori_err/message/motion_executed 等字段
+        """
+        if not hasattr(self, 'robot_model') or self.robot_model is None:
+            return {
+                'success': False,
+                'message': '未提供 robot_model，无法求解 IK',
+                'q': None
+            }
 
-    #     # 构建位姿矩阵
-    #     position = np.array(target_pose[:3])
-    #     quaternion = np.array(target_pose[3:])
-    #     rotation_matrix = quaternion_to_matrix(quaternion)
-    #     pose_matrix = make_transform(rotation_matrix, position)
-    #     if use_random_init:
-    #         q_init = self._generate_random_q(scale=0.5)
-    #         if display:
-    #             logger.info("使用随机初始值")
-    #     else:
-    #         q_init = self.get_joints(arm=arm)
-    #         if q_init is None:
-    #             return {
-    #                 'success': False,
-    #                 'message': '无法获取当前关节角度',
-    #                 'q': None
-    #             }
-    #     if display:
-    #         logger.info(f"初始关节角度 (rad): {[f'{q:+.4f}' for q in q_init]}")
-    #         logger.info(f"初始关节角度 (deg): {[f'{np.rad2deg(q):+.2f}' for q in q_init]}")
-    #         logger.info(f"正在求解IK (方法: {method},求解臂{arm} 最大迭代: {max_iters})...")
-    #     ik_result = inverse_kinematics(
-    #         self.robot_model,
-    #         pose_matrix,
-    #         q_init,
-    #         backend=backend,
-    #         method=method,
-    #         max_iters=max_iters,
-    #         pos_tol=tolerance,
-    #         ori_tol=tolerance,
-    #         multi_start=multi_start,
-    #         multi_noise=0.3,
-    #         use_analytic_jacobian=True
-    #     )
+        # 构建位姿矩阵
+        position = np.array(target_pose[:3])
+        quaternion = np.array(target_pose[3:])
+        rotation_matrix = quaternion_to_matrix(quaternion)
+        pose_matrix = make_transform(rotation_matrix, position)
+        if use_random_init:
+            q_init = self._generate_random_q(scale=0.5)
+            if display:
+                logger.info("使用随机初始值")
+        else:
+            q_init = self.get_joints(arm=arm)
+            if q_init is None:
+                return {
+                    'success': False,
+                    'message': '无法获取当前关节角度',
+                    'q': None
+                }
+        if display:
+            logger.info(f"初始关节角度 (rad): {[f'{q:+.4f}' for q in q_init]}")
+            logger.info(f"初始关节角度 (deg): {[f'{np.rad2deg(q):+.2f}' for q in q_init]}")
+            logger.info(f"正在求解IK (方法: {method},求解臂{arm} 最大迭代: {max_iters})...")
+        ik_result = inverse_kinematics(
+            self.robot_model,
+            pose_matrix,
+            q_init,
+            backend=backend,
+            method=method,
+            max_iters=max_iters,
+            pos_tol=tolerance,
+            ori_tol=tolerance,
+            multi_start=multi_start,
+            multi_noise=0.3,
+            use_analytic_jacobian=True
+        )
 
-    #     if ik_result.get('success'):
-    #         if display:
-    #             logger.info("✓ IK 求解成功!")
-    #             logger.info(f"  迭代次数: {ik_result.get('iters')}")
-    #             logger.info(f"  位置误差: {ik_result.get('pos_err', 0.0):.6e} m")
-    #             logger.info(f"  姿态误差: {ik_result.get('ori_err', 0.0):.6e} rad")
-    #             logger.info(f"  关节角度 (rad): {[f'{q:+.4f}' for q in ik_result['q']]}")
-    #             logger.info(f"  关节角度 (deg): {[f'{np.rad2deg(q):+.2f}' for q in ik_result['q']]}")
+        if ik_result.get('success'):
+            if display:
+                logger.info("✓ IK 求解成功!")
+                logger.info(f"  迭代次数: {ik_result.get('iters')}")
+                logger.info(f"  位置误差: {ik_result.get('pos_err', 0.0):.6e} m")
+                logger.info(f"  姿态误差: {ik_result.get('ori_err', 0.0):.6e} rad")
+                logger.info(f"  关节角度 (rad): {[f'{q:+.4f}' for q in ik_result['q']]}")
+                logger.info(f"  关节角度 (deg): {[f'{np.rad2deg(q):+.2f}' for q in ik_result['q']]}")
 
-    #         if execute:
-    #             ok = move_joints(self.servo_driver, ik_result['q'], arm=arm, interpolate=True)
-    #             ik_result['motion_executed'] = bool(ok)
-    #         else:
-    #             ik_result['motion_executed'] = False
-    #             if display:
-    #                 logger.info("  (未执行运动，execute=False)")
-    #         return ik_result
-    #     else:
-    #         if display:
-    #             logger.error(f"✗ IK 求解失败: {ik_result.get('message', '未知错误')}")
-    #             logger.error(f"  迭代次数: {ik_result.get('iters', 'N/A')}")
-    #             logger.error(f"  位置误差: {ik_result.get('pos_err', float('inf')):.6e} m")
-    #             logger.error(f"  姿态误差: {ik_result.get('ori_err', float('inf')):.6e} rad")
-    #         return ik_result
+            if execute:
+                ok = move_joints(self.servo_driver, ik_result['q'], arm=arm, interpolate=True)
+                ik_result['motion_executed'] = bool(ok)
+            else:
+                ik_result['motion_executed'] = False
+                if display:
+                    logger.info("  (未执行运动，execute=False)")
+            return ik_result
+        else:
+            if display:
+                logger.error(f"✗ IK 求解失败: {ik_result.get('message', '未知错误')}")
+                logger.error(f"  迭代次数: {ik_result.get('iters', 'N/A')}")
+                logger.error(f"  位置误差: {ik_result.get('pos_err', float('inf')):.6e} m")
+                logger.error(f"  姿态误差: {ik_result.get('ori_err', float('inf')):.6e} rad")
+            return ik_result
 
     # 插值接口（显式）
     # def set_joint_target_interpolation(
@@ -300,27 +300,27 @@ class SynriaBessicaRobotAPI:
         except Exception:
             return None
 
-    # def get_pose(self, arm: Optional[str] = None) -> Optional[Dict]:
-    #     if not HAVE_ROBOCORE or self.robot_model is None:
-    #         logger.error("未安装 RoboCore 或未提供 robot_model，无法计算位姿")
-    #         return None
-    #     arm = arm or self.default_arm
-    #     joints = self.get_joints(arm=arm)
-    #     if not joints or not isinstance(joints, list):
-    #         logger.error("无法获取关节角度")
-    #         return None
-    #     T_fk = forward_kinematics(self.robot_model, joints, backend='numpy', return_end=True)
-    #     position = T_fk[:3, 3]
-    #     rotation = T_fk[:3, :3]
-    #     euler = matrix_to_euler(rotation, seq='xyz')
-    #     quat = matrix_to_quaternion(rotation)
-    #     return {
-    #         'transform': T_fk,
-    #         'position': position,
-    #         'rotation': rotation,
-    #         'euler_xyz': euler,
-    #         'quaternion_xyzw': quat,
-    #     }
+    def get_pose(self, arm: Optional[str] = None) -> Optional[Dict]:
+        if self.robot_model is None:
+            logger.error("未安装 RoboCore 或未提供 robot_model，无法计算位姿")
+            return None
+        arm = arm or self.default_arm
+        joints = self.get_joints(arm=arm)
+        if not joints or not isinstance(joints, list):
+            logger.error("无法获取关节角度")
+            return None
+        T_fk = forward_kinematics(self.robot_model, joints, backend='numpy', return_end=True)
+        position = T_fk[:3, 3]
+        rotation = T_fk[:3, :3]
+        euler = matrix_to_euler(rotation, seq='xyz')
+        quat = matrix_to_quaternion(rotation)
+        return {
+            'transform': T_fk,
+            'position': position,
+            'rotation': rotation,
+            'euler_xyz': euler,
+            'quaternion_xyzw': quat,
+        }
 
     # def get_firmware_version(self, timeout: float = 5.0, send_interval: float = 0.2) -> Optional[str]:
     #     # 优先读缓存
