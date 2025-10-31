@@ -4,7 +4,7 @@
 
 ## 先决条件
 
-*   Python 3.6 或更高版本。
+*   Python 3.10 或更高版本。
 *   `pyserial`库：用于串口通信。
 
 ## 安装步骤
@@ -20,9 +20,10 @@
 2.  **安装依赖项**
     创建conda环境（必须）：
     ```bash
-    conda create -n bessica_d_sdk python=3.8
+    conda create -n bessica_d_sdk python=3.10
     conda activate bessica_d_sdk
     ```
+    请在确保网络环境良好的情况下进行依赖安装
     安装库以及依赖：
     ```bash
     pip install -r requirements.txt

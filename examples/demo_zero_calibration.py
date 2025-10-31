@@ -1,8 +1,8 @@
-from bessica_d_sdk.controller import ArmController
+from bessica_d_sdk.hardware import ServoDriver
 import time
 
 def main():
-    controller = ArmController()
+    controller = ServoDriver()
     if not controller.connect():
         print("无法连接到机械臂")
         return

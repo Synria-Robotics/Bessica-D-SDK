@@ -1,11 +1,12 @@
 import time
 from bessica_d_sdk.controller import ArmController
+from bessica_d_sdk.hardware import ServoDriver
 from bessica_d_sdk.utils import open_gripper, close_gripper, set_gripper_angle, set_dual_gripper, print_gripper_angles
 
 def main():
     print("=== Bessica-D 夹爪控制 Demo ===")
 
-    controller = ArmController(debug_mode=False)
+    controller = ServoDriver(debug_mode=False)
     if not controller.connect():
         print("连接失败")
         return

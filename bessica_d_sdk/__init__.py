@@ -1,6 +1,18 @@
 """
 Bessica-D-SDK
 ==============
+架构层次：
+- 用户层: SynriaRobotAPI (统一用户接口)
+- 规划层: 使用 RoboCore 轨迹规划功能
+- 控制层: MotionController (运动控制)
+- 执行层: HardwareExecutor (硬件执行)
+- 硬件层: ServoDriver (底层驱动)
+- 运动学层: 使用 RoboCore 运动学功能 (FK/IK/Jacobian)
+
+Bridge with RoboCore:
+- robocore.kinematics: 提供 FK/IK/Jacobian 计算
+- robocore.planning: 提供轨迹规划功能
+- robocore.modeling: 提供 RobotModel
 
 此包提供了与 Bessica-D 灵越双臂交互的工具。
 主要通过 `ArmController` 类进行控制。
@@ -9,10 +21,95 @@ Bessica-D-SDK
 __version__ = "0.1.0"
 __author__ = "Xuanya Robotics" 
 
-from .controller import ArmController
-from .data_parser import JointState
+from .api import SynriaBessicaRobotAPI
+from .hardware import ServoDriver
+#from .execution import HardwareExecutor
+
+# Import from RoboCore for kinematics and modeling
+from robocore.modeling import RobotModel
+from robocore.kinematics import forward_kinematics, inverse_kinematics, jacobian
+from robocore.planning import (
+    cubic_polynomial_trajectory,
+    quintic_polynomial_trajectory,
+    linear_joint_trajectory,
+    linear_cartesian_trajectory,
+    trapezoidal_velocity_profile
+)
+
+__version__ = "6.0.0"
+__author__ = "Bessica-D Team"
+__description__ = "Bessica-D机械臂SDK v1.0.0 - Bridged with RoboCore"
 
 __all__ = [
-    "ArmController",
-    "JointState"
+    "SynriaBessicaRobotAPI",
+    "create_robot",
+    "create_session",
+    
+    # Hardware Layer
+    "ServoDriver",
+    
+    
+    # # Execution Layer
+    # "HardwareExecutor",
+    
+    # RoboCore - Modeling
+    "RobotModel",
+
+    # RoboCore - Kinematics
+    "forward_kinematics",
+    "inverse_kinematics",
+    "jacobian",
+    
+    # RoboCore - Planning
+    "cubic_polynomial_trajectory",
+    "quintic_polynomial_trajectory",
+    "linear_joint_trajectory",
+    "linear_cartesian_trajectory",
+    "trapezoidal_velocity_profile",
 ]
+
+# def create_robot(
+#         port: str = "", 
+#         baudrate: int = 1000000, 
+#         robot_version: str = "v1_0",
+#         gripper_type: str = "50mm",
+#         firmware_version: None = None,
+#         debug_mode: bool = False,
+#         speed_deg_s: float = 20.0
+#     ) -> SynriaBessicaRobotAPI:
+#     """
+#     :param port: Serial port
+#     :param baudrate: Baud rate
+#     :param robot_version: Robot version (e.g., "v1_0")
+#     :param gripper_type: Gripper type (e.g., "50mm", "30mm")
+#     :param debug_mode: Debug mode
+#     :return: Robot API instance
+#     """
+#     # 创建硬件层
+#     servo_driver = ServoDriver(port=port, baudrate=baudrate, debug_mode=debug_mode, firmware_version=firmware_version)
+    
+    # # 创建运动学层 (使用 RoboCore)
+    # try:
+    #     from robot_descriptions import urdf
+    #     urdf_path = getattr(getattr(urdf, "Bessica_D_v1_0")).urdf
+    #     #end_link = 'tool0'
+    #     robot_model = RobotModel(str(urdf_path))
+    # except ImportError:
+    #     print("Warning: robot_descriptions not found, using default URDF path")
+    #     # Fallback to default path
+    #     from pathlib import Path
+    #     default_urdf = Path(__file__).parent.parent / "assets" / "robot" / "urdf" / f"Alicia-D_{robot_version}" / "alicia_duo_with_gripper.urdf"
+    #     if default_urdf.exists():
+    #         robot_model = RobotModel(str(default_urdf), end_link='tool0')
+    #     else:
+    #         raise FileNotFoundError(f"Cannot find URDF file for {robot_version}")
+    
+    # # 创建用户层 (不再需要 ik_controller，直接使用 robocore.kinematics 函数)
+    # robot = SynriaBessicaRobotAPI(
+    #     servo_driver=servo_driver,
+    #     robot_model=robot_model, 
+    #     #firmware_version=firmware_version,
+    #     speed_deg_s = speed_deg_s
+    # )
+    
+    # return robot

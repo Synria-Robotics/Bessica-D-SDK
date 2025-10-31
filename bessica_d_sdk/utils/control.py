@@ -1,6 +1,6 @@
 from typing import List, Union
 import time
-from bessica_d_sdk.controller import ArmController
+from bessica_d_sdk.hardware.servo_driver import ServoDriver
 import logging
 import copy
 
@@ -19,7 +19,7 @@ logger = logging.getLogger("Control_utils")
 def ease_in_out_cubic(x: float) -> float:
     return 4 * x**3 if x < 0.5 else 1 - pow(-2 * x + 2, 3) / 2
 
-def control_move(controller: ArmController,
+def control_move(controller: ServoDriver,
                  current_angles: Union[List[float], List[List[float]]],
                  target_angles: Union[List[float], List[List[float]]],
                  arm: str,
@@ -68,10 +68,11 @@ def control_move(controller: ArmController,
     else:
         logger.error(f"请检查arm输入指令是否正确，当前arm值为{arm}")
         return False
-
+    # controller.enable_torque(arm)
+    # time.sleep(0.1)
     return True
 
-def wait_for_valid_state(controller: ArmController, arm: str, timeout: float=5.0):
+def wait_for_valid_state(controller: ServoDriver, arm: str, timeout: float=5.0):
     start_time = time.time()
     while time.time() - start_time < timeout:
         js = controller.read_joint_state(arm)
@@ -81,7 +82,7 @@ def wait_for_valid_state(controller: ArmController, arm: str, timeout: float=5.0
     print(f"超时：未收到 {arm} 状态数据")
     return False
 
-def move_to_zero(controller: ArmController, arm: str = None, interpolate: bool = True) -> bool:
+def move_to_zero(controller: ServoDriver, arm: str = None, interpolate: bool = True) -> bool:
     """
     将指定机械臂移动到零位 (新协议仅支持单臂控制帧)。
     若 arm == 'both' 则依次对 left_arm 与 right_arm 执行。
@@ -112,7 +113,7 @@ def move_to_zero(controller: ArmController, arm: str = None, interpolate: bool =
     else:
         return controller.set_joint_angles(joint_angles=target, arm=arm, wait_for_completion=True)
 
-def move_joint(controller: ArmController, joint_id: int, angle_deg: float, arm: str = None, interpolate: bool = True) -> bool:
+def move_joint(controller: ServoDriver, joint_id: int, angle_deg: float, arm: str = None, interpolate: bool = True) -> bool:
     """
     控制单个机械臂的某个关节角度（单位：角度）
 
@@ -138,7 +139,7 @@ def move_joint(controller: ArmController, joint_id: int, angle_deg: float, arm: 
     else:
         return controller.set_joint_angles(joint_angles=target, arm=arm, wait_for_completion=True)
 
-def move_joints(controller: ArmController, angles_deg: List[float], arm: str = None, interpolate: bool = True) -> bool:
+def move_joints(controller: ServoDriver, angles_deg: List[float], arm: str = None, interpolate: bool = True) -> bool:
     """
     控制单臂所有关节角度（单位：度）
 
@@ -166,30 +167,30 @@ def move_joints(controller: ArmController, angles_deg: List[float], arm: str = N
     else:
         return controller.set_joint_angles(joint_angles=target, arm=arm, wait_for_completion=True)
 
-def move_joint_dual_arm(controller: ArmController, left_joint_id: int, right_joint_id: int, angles_left_deg: float, angles_right_deg: float, interpolate: bool = True) -> bool:
-    """
-    控制双臂全部 14 个关节（单位：度）
+# def move_joint_dual_arm(controller: ServoDriver, left_joint_id: int, right_joint_id: int, angles_left_deg: float, angles_right_deg: float, interpolate: bool = True) -> bool:
+#     """
+#     控制双臂全部 14 个关节（单位：度）
 
-    Args:
-        angles_left_deg: 左臂 7 个关节角度
-        angles_right_deg: 右臂 7 个关节角度
-        interpolate: 是否插值移动
+#     Args:
+#         angles_left_deg: 左臂 7 个关节角度
+#         angles_right_deg: 右臂 7 个关节角度
+#         interpolate: 是否插值移动
 
-    Returns:
-        bool: 控制是否成功
-    """
-    current = controller.read_joint_angles(arm='both')
-    target = copy.deepcopy(current)
+#     Returns:
+#         bool: 控制是否成功
+#     """
+#     current = controller.read_joint_angles(arm='both')
+#     target = copy.deepcopy(current)
 
-    target[0][left_joint_id] = angles_left_deg * controller.DEG_TO_RAD
-    target[1][right_joint_id] = angles_right_deg * controller.DEG_TO_RAD
+#     target[0][left_joint_id] = angles_left_deg * controller.DEG_TO_RAD
+#     target[1][right_joint_id] = angles_right_deg * controller.DEG_TO_RAD
 
-    if interpolate:
-        return control_move(controller, current, target, arm="both")
-    else:
-        return controller.set_joint_angles(joint_angles=target, arm="both", wait_for_completion=True)
+#     if interpolate:
+#         return control_move(controller, current, target, arm="both")
+#     else:
+#         return controller.set_joint_angles(joint_angles=target, arm="both", wait_for_completion=True)
 
-def move_joints_dual_arm(controller: ArmController, 
+def move_joints_dual_arm(controller: ServoDriver, 
                          left_angles_deg: List[float], 
                          right_angles_deg: List[float], 
                          interpolate: bool = True) -> bool:
@@ -219,7 +220,7 @@ def move_joints_dual_arm(controller: ArmController,
     else:
         return controller.set_joint_angles(joint_angles=target, arm="both", wait_for_completion=True)
 
-def set_gripper_angle(controller: ArmController, angle_deg: float, arm: str = "left_arm", wait: bool = True) -> bool:
+def set_gripper_angle(controller: ServoDriver, angle_deg: float, arm: str = None, wait: bool = True) -> bool:
     """
     控制单个机械臂夹爪的角度（单位：度）
 
@@ -234,7 +235,7 @@ def set_gripper_angle(controller: ArmController, angle_deg: float, arm: str = "l
     angle_rad = angle_deg * controller.DEG_TO_RAD
     return controller.set_gripper(angle_rad, arm=arm, wait_for_completion=wait)
 
-def set_dual_gripper(controller: ArmController, left_deg: float, right_deg: float, wait: bool = True) -> bool:
+def set_dual_gripper(controller: ServoDriver, left_deg: float, right_deg: float, wait: bool = True) -> bool:
     """
     分别控制左右臂夹爪角度（单位：度）
 
@@ -253,7 +254,7 @@ def set_dual_gripper(controller: ArmController, left_deg: float, right_deg: floa
     time.sleep(0.1)
     
 
-def open_gripper(controller: ArmController, angle_deg: float = 100.0, arm: str = "both", wait: bool = True) -> bool:
+def open_gripper(controller: ServoDriver, angle_deg: float = 100.0, arm: str = "both", wait: bool = True) -> bool:
     """
     打开夹爪（默认 100°）
 
@@ -267,7 +268,7 @@ def open_gripper(controller: ArmController, angle_deg: float = 100.0, arm: str =
     else:
         return set_gripper_angle(controller, angle_deg, arm=arm, wait=wait)
 
-def close_gripper(controller: ArmController, arm: str = "both", wait: bool = True) -> bool:
+def close_gripper(controller: ServoDriver, arm: str = None, wait: bool = True) -> bool:
     """
     关闭夹爪（设置为 0°）
 
@@ -277,7 +278,7 @@ def close_gripper(controller: ArmController, arm: str = "both", wait: bool = Tru
     """
     return open_gripper(controller, angle_deg=0.0, arm=arm, wait=wait)
 
-def print_joint_angles(controller: ArmController, arm: str = "both", read_gripper: bool=True):
+def print_joint_angles(controller: ServoDriver, arm: str = "both", read_gripper: bool=True):
     """
     打印当前关节角度（度）。
     """
@@ -295,7 +296,7 @@ def print_joint_angles(controller: ArmController, arm: str = "both", read_grippe
         if read_gripper:
             print_gripper_angles(controller, arm)
 
-def print_gripper_angles(controller: ArmController, arm: str = "both"):
+def print_gripper_angles(controller: ServoDriver, arm: str = "both"):
     """
     打印当前关节夹爪角度（度）。（0~100度）
     """

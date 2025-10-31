@@ -6,15 +6,17 @@ from typing import List, Optional, Union, Tuple, Dict
 import numpy as np
 import traceback
 
-from .hardware.serial_comm import SerialComm
-from .hardware.data_parser import DataParser, JointState, JointStateDict
+from .serial_comm import SerialComm
+from .data_parser import DataParser, JointState, JointStateDict
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("Controller")
+logger = logging.getLogger("ServoDriver")
 
-class ArmController:
+
+
+class ServoDriver:
     """机械臂控制模块"""
     
     # 常量定义
@@ -41,8 +43,8 @@ class ArmController:
     PRESENT_POSITION = 0x38 #当前机械臂关节角度识别帧
     # PRESENT_SPEED = 0x41    #当前机械臂关节速度识别 （待开发）
 
-    LEFT_ARM = 0X01
-    RIGHT_ARM = 0X02
+    LEFT_ARM = 0X02
+    RIGHT_ARM = 0X01
     BOTH_ARM = 0x03
 
 
@@ -655,8 +657,7 @@ class ArmController:
         Returns:
             List[int]: 控制帧字节列表
         """
-
-         # 创建夹爪控制帧 (固定长度)
+        # 创建夹爪控制帧 (固定长度)
         frame = [0] * self.GRIPPER_FRAME_SIZE
         frame[0] = self.FRAME_HEADER
         frame[1] = self.CMD_GRIPPER
