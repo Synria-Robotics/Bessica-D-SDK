@@ -1,224 +1,287 @@
-# API 参考
+# API 参考文档
 
-本文档提供了 Bessica-D SDK 中主要类和方法的详细参考。
+本节介绍 Bessica-D SDK 的核心类与方法接口。
 
-## 核心模块
 
-SDK 的核心功能主要由以下模块提供：
-
-*   [`bessica_d_sdk.controller`](../bessica_d_sdk/controller.py): 包含主要的 `ArmController` 类，用于与机械臂交互。
-*   [`bessica_d_sdk.data_parser`](../bessica_d_sdk/data_parser.py): 包含 `DataParser` 类和 `JointState` 命名元组，用于解析和存储来自机械臂的数据。
-*   [`bessica_d_sdk.serial_comm`](../bessica_d_sdk/serial_comm.py): 包含 `SerialComm` 类，处理底层串口通信。
-
-对于大多数用户而言，主要交互将通过 `ArmController` 类进行。
-
-## `bessica_d_sdk.controller.ArmController`
-
-此类是控制 Bessica-D 机械臂的主要接口。
+##  控制接口：`bessica_d_sdk.api.synria_b_robot_api.SynriaBessicaRobotAPI`
 
 ```python
-from bessica_d_sdk.controller import ArmController
+from bessica_d_sdk.api import SynriaBessicaRobotAPI
+from bessica_d_sdk.hardware import ServoDriver
+
+robot = SynriaBessicaRobotAPI(ServoDriver(port=args.port, baudrate=args.baudrate, debug_mode=False))
 ```
 
-### 常量
+### 主要方法一览：
 
-*   `ArmController.DEG_TO_RAD`: `float`
-    将角度从度转换为弧度的系数 (`math.pi / 180.0`)。
-*   `ArmController.RAD_TO_DEG`: `float`
-    将角度从弧度转换为度的系数 (`180.0 / math.pi`)。
+#### 连接管理：
+- `connect()`  
+  连接机械臂并启动状态更新线程
 
-### 初始化
+- `disconnect()`  
+  断开机械臂连接并停止更新线程
 
-*   `__init__(self, port: str = "", baudrate: int = 921600, debug_mode: bool = False)`
-    初始化机械臂控制器。
-    *   **参数**:
-        *   `port` (`str`, 可选): 串口名称 (例如, Linux 上的 `"/dev/ttyUSB0"` 或 Windows 上的 `"COM3"`)。如果留空，SDK 将尝试自动搜索可用串口。默认为 `""`。
-        *   `baudrate` (`int`, 可选): 串口通信的波特率。默认为 `921600`。
-        *   `debug_mode` (`bool`, 可选): 是否启用调试模式。启用后，将输出更详细的日志信息，包括发送和接收的数据帧。默认为 `False`。
+#### 运动控制：
+- `set_home(arm="both", speed_factor=1.0)`  
+  移动机械臂到初始位置（零位）
+  - `arm`: `"left_arm"`, `"right_arm"` 或 `"both"`（默认）
+  - `speed_factor`: 速度因子（默认 1.0）
 
-### 连接与断开
+- `set_joint_target(target_joints, target_joints_second=None, arm=None, joint_format="deg", wait=True, speed_factor=0.5)`  
+  移动单臂或双臂到目标关节角度
+  - `target_joints`: `List[float]`，长度为 7 的关节角度列表（单位：弧度或度）
+  - `target_joints_second`: `Optional[List[float]]`，双臂模式下右臂的关节角度列表（默认 `None`）
+  - `arm`: `"left_arm"`, `"right_arm"` 或 `"both"`（默认根据 `default_arm`）
+  - `joint_format`: `"rad"` 或 `"deg"`（默认 `"deg"`）
+  - `wait`: 是否等待运动完成（默认 `True`）
+  - `speed_factor`: 速度因子（默认 0.5）
+  - **注意**：当 `arm="both"` 时，需要提供 `target_joints_second` 参数
 
-*   `connect(self) -> bool`
-    连接到机械臂。如果 `port` 未在初始化时指定，则会尝试自动查找。
-    *   **返回**: `bool` - 如果连接成功则为 `True`，否则为 `False`。
+- `set_pose_target(target_pose, target_pose_second_arm=None, backend='numpy', method='dls', display=True, tolerance=1e-4, max_iters=100, multi_start=0, use_random_init=False, speed_factor=1.0, arm="both", execute=True)`  
+  使用逆运动学移动末端执行器到目标位姿
+  - `target_pose`: `List[float]`，目标位姿 `[x, y, z, qx, qy, qz, qw]`（单臂或左臂）
+  - `target_pose_second_arm`: `Optional[List[float]]`，双臂模式下右臂的目标位姿（默认 `None`）
+  - `arm`: `"left_arm"`, `"right_arm"` 或 `"both"`（默认 `"both"`）
+  - **注意**：当 `arm="both"` 时，需要提供 `target_pose_second_arm` 参数，会对左右臂分别求解 IK
+  - `backend`: `'numpy'` 或 `'torch'`（默认 `'numpy'`）
+  - `method`: IK 求解方法 `'dls'`, `'pinv'` 或 `'transpose'`（默认 `'dls'`）
+  - `display`: 是否打印求解细节（默认 `True`）
+  - `tolerance`: 位置与姿态容差（默认 `1e-4`）
+  - `max_iters`: 最大迭代次数（默认 `100`）
+  - `multi_start`: 多起点尝试次数（默认 `0`）
+  - `use_random_init`: 是否使用随机初值（默认 `False`）
+  - `speed_factor`: 运动速度因子（默认 `1.0`）
+  - `execute`: 是否执行得到的关节解（默认 `True`）
+  - **返回**: 
+    - 单臂模式：`Dict` 包含 `success`, `q`, `iters`, `pos_err`, `ori_err`, `message`, `motion_executed` 等字段
+    - 双臂模式（`arm="both"`）：返回元组 `(ik_result_l, ik_result_r)`，每个元素为上述字典结构，分别对应左右臂的 IK 求解结果
 
-*   `disconnect(self)`
-    断开与机械臂的连接并关闭串口。
+#### 状态获取：
+- `get_joints(arm=None)`  
+  返回当前关节角度
+  - `arm`: `"left_arm"`, `"right_arm"` 或 `both`（默认 `None`，返回 `"both"`）
+  - **返回**: 
+    - 单臂：`List[float]`（7 个关节角度，弧度）
+    - 双臂：`List[List[float]]`（`[[left_7_joints], [right_7_joints]]`）
 
-### 读取数据
+- `get_pose(arm=None)`  
+  获取当前末端执行器位置与姿态
+  - `arm`: `"left_arm"`, `"right_arm"` 或 `"both"`（默认 `None`，使用 `default_arm`）
+  - **返回**: `Dict` 包含：
+    - 单臂模式：`transform`, `position`, `rotation`, `euler_xyz`, `quaternion_xyzw`, `output_to_ik`
+    - 双臂模式（`arm="both"`）：上述字段为列表格式，每个元素对应左右臂：
+      - `transform`: `[T_fk_l, T_fk_r]`
+      - `position`: `[position_l, position_r]`
+      - `rotation`: `[rotation_l, rotation_r]`
+      - `euler_xyz`: `[euler_l, euler_r]`
+      - `quaternion_xyzw`: `[quat_l, quat_r]`
+      - `output_to_ik`: `[output_to_ik_l, output_to_ik_r]`（可直接用于 `set_pose_target`）
 
-*   `read_joint_angles(self) -> Optional[List[float]]`
-    读取机械臂六个关节的当前角度。
-    此方法会尝试读取新的数据帧，如果成功且为关节数据，则解析并返回最新角度。如果未能读取到新的关节数据，则返回上一次已知的关节角度。
-    *   **返回**: `Optional[List[float]]` - 包含六个关节角度（单位：弧度）的列表。如果无法获取状态（例如，在初始连接且未收到任何数据之前），理论上可能返回基于内部默认值的状态，但通常在连接后很快就会有实际数据。
+- `get_gripper(arm=None)`  
+  返回当前夹爪开合度
+  - `arm`: `"left_arm"`, `"right_arm"`, `"both"` 或 `None`（默认 `None`，使用 `default_arm`）
+  - **返回**: 
+    - 单臂：`float`（0-100 度对应的弧度值）
+    - 双臂：`Tuple[float, float]`（`(left_gripper, right_gripper)`）
 
-*   `read_gripper_data(self, arm: str = 'both') -> Union[float, Tuple[float, float]]`
-    读取夹爪的当前角度
-    此方法会尝试读取新的数据帧，如果成功且为夹爪数据，则解析并返回最新状态。如果未能读取到新的夹爪数据，则返回上一次已知的夹爪状态。
-    *   **返回**: `Union[float, Tuple[float, float]]` - 单臂夹爪的弧度数据或者双臂夹爪弧度元组：
-        *   单臂：夹爪角度
-        *   双臂：（左臂夹爪角度， 右臂夹爪角度）
+- `print_state(arm="both", output_format="deg")`  
+  打印当前机械臂信息
+  - `arm`: `"left_arm"`, `"right_arm"` 或 `"both"`（默认 `"both"`）
+  - `output_format`: `"deg"` 或 `"rad"`（默认 `"deg"`）
 
-*   `read_joint_state(self, arm: str = 'both') -> Optional[Union[JointState, JointStateDict]]`
-    读取完整的机械臂状态，包括双臂所有关节角度以及夹爪角度。
-    此方法会尝试读取并解析最新的数据帧（无论是关节数据还是夹爪数据），并更新内部状态。
-    *   **返回**: [`[Union[JointState, JointStateDict]]`](#bessica_d_sdkdata_parserjointstate) - 一个包含指定机械臂完整状态的对象, 或者包含双臂完整状态的dict。
+#### 夹爪控制：
+- `set_gripper_target(arm, command=None, value=None, wait_for_completion=True, timeout=1.0, tolerance=0.1)`  
+  控制夹爪位置
+  - `arm`: `"left_arm"`, `"right_arm"` 或 `"both"`（必需，若为 `None` 则使用 `default_arm`）
+  - `command`: `'open'` 或 `'close'`（与 `value` 二选一）
+    - `'open'` 对应值为 `0.1` 度
+    - `'close'` 对应值为 `99.9` 度
+  - `value`: `float`（0-100 度）（与 `command` 二选一）
+  - `wait_for_completion`: 是否等待完成（默认 `True`）
+  - `timeout`: 超时时间（秒，默认 `1.0`）
+  - `tolerance`: 误差容忍范围（弧度，默认 `0.1`）
 
-### 设置与控制
+#### 系统控制：
+- `torque_control(command, arm='both')`  
+  启用或关闭扭矩（'on' 或 'off'）
+  - `command`: `'on'` 或 `'off'`
+  - `arm`: `"left_arm"`, `"right_arm"` 或 `"both"`（默认 `"both"`）
 
-*   `set_joint_angles(self, joint_angles: List[float], gripper_angle: float = None, wait_for_completion: bool = True, timeout: float = 10.0, tolerance: float = 0.08) -> bool`
-    设置机械臂六个关节的目标角度。
-    *   **参数**:
-        *   `joint_angles` (`List[float]`): 包含七个目标关节角度（单位：弧度）的列表。列表长度必须为6。
-        *   `gripper_angle` (`float`, 可选): 夹爪的目标角度（单位：弧度）。如果提供此参数，则在设置关节角度后会接着发送夹爪控制命令。默认为 `None` (不控制夹爪)。
-        *   `wait_for_completion` (`bool`, 可选): 是否等待运动完成后再返回。默认为 `True`。
-        *   `timeout` (`float`, 可选): 等待运动完成的最大时间（单位：秒）。默认为 `5.0`。
-        *   `tolerance` (`float`, 可选): 判断运动是否完成的角度误差容忍度（单位：弧度）。默认为 `0.08`。
-    *   **返回**: `bool` - 如果命令成功发送并执行（如果等待完成）则为 `True`，否则为 `False`。
-
-*   `set_gripper(self, angle_rad: float) -> bool`
-    设置夹爪的开合角度。
-    *   **参数**:
-        *   `angle_rad` (`float`): 夹爪的目标角度（单位：弧度）。通常 0 表示完全张开，某个正值（例如 `100 * DEG_TO_RAD`）表示完全闭合，具体范围取决于夹爪硬件。
-    *   **返回**: `bool` - 如果命令成功发送则为 `True`，否则为 `False`。
-
-*   `set_zero_position(self) -> bool`
-    将机械臂当前的姿态设置为新的零点位置。
-    *   **返回**: `bool` - 如果命令成功发送则为 `True`，否则为 `False`。
-
-*   `enable_torque(self) -> bool`
-    使能所有关节的力矩。机械臂将尝试保持当前位置，抵抗外力。
-    *   **返回**: `bool` - 如果命令成功发送则为 `True`，否则为 `False`。
-
-*   `disable_torque(self) -> bool`
-    禁用所有关节的力矩。机械臂关节将可以被自由拖动。
-    *   **返回**: `bool` - 如果命令成功发送则为 `True`，否则为 `False`。
-
-
-```python
-from bessica_d_sdk.data_parser import JointState
-```
-
-## `bessica_d_sdk.data_parser.JointStateDict`
-
-```python
-from bessica_d_sdk.data_parser import JointStateDict
-```
-
-`JointStateDict` 是一个字典类型，结构为 `Dict[str, JointState]`，用于同时存储左右机械臂的状态。
-
-### 示例结构：
-
-```python
-{
-    "left_arm": JointState(angles=[...], gripper=..., timestamp=...),
-    "right_arm": JointState(angles=[...], gripper=..., timestamp=...)
-}
-```
-
-### 特点：
-
-* `left_arm` 与 `right_arm` 是键，对应左右臂
-* 每个值都是一个 `JointState` 实例
-* 通过 `controller.read_joint_state(arm="both")` 获取该结构
-* 常用于双臂同步操作、状态监测等场景
-
-
-### 属性
-
-*   `angles`: `List[float]`
-    一个包含六个关节角度（单位：弧度）的列表。
-*   `gripper`: `float`
-    夹爪的当前角度（单位：弧度）。
-*   `timestamp`: `float`
-    状态数据最后更新的时间戳（`time.time()` 的结果，单位：秒）。
-
-
-## 内部模块 (简述)
-
-### `bessica_d_sdk.data_parser.DataParser`
-
-*   此类负责解析从串口接收到的原始字节数据帧，将其转换为结构化的信息，如关节角度、夹爪状态等，并更新 `JointState`。
-*   主要方法:
-    *   `parse_frame(self, frame: List[int]) -> Optional[Dict]`: 解析单个数据帧。
-    *   `get_joint_state(self) -> JointState`: 获取当前解析的最新状态。
-
-### `bessica_d_sdk.serial_comm.SerialComm`
-
-*   此类封装了与串口设备进行通信的底层逻辑。
-*   主要方法:
-    *   `connect(self) -> bool`: 打开并配置串口连接。
-    *   `disconnect(self)`: 关闭串口连接。
-    *   `send_data(self, data: List[int]) -> bool`: 将字节列表发送到串口。
-    *   `read_frame(self) -> Optional[List[int]]`: 从串口读取一个完整的数据帧。
-    *   `find_serial_port(self) -> str`: 自动查找可用的串口设备。
-
-用户通常不需要直接与 `DataParser` 或 `SerialComm` 类交互，因为 `ArmController` 已经处理了这些细节。
-
-## `bessica_d_sdk.utils.control`
-
-该模块提供一组高级控制函数，用于简化常用操作，如移动关节、控制夹爪、打印状态等。
-
-```python
-from bessica_d_sdk.utils import move_joint, move_joints, open_gripper, ...
-```
-
-### 关节控制函数
-
-#### `move_joint(controller, joint_id, angle_deg, arm, interpolate=True)`
-控制单个关节到指定角度。
-
-- `controller`: `ArmController` 实例  
-- `joint_id`: 目标关节索引（0-6）  
-- `angle_deg`: 目标角度（单位：度）  
-- `arm`: `"left_arm"` 或 `"right_arm"`  
-- `interpolate`: 是否插值移动（默认 True）  
-- **返回**: `bool`
-
-#### `move_joints(controller, angles_deg, arm, interpolate=True)`
-设置单臂全部 7 个关节角度。
-
-- `angles_deg`: `List[float]`，长度为 7，单位：度  
-- 其他参数同上  
-- **返回**: `bool`
-
-#### `move_joint_dual_arm(controller, left_joint_id, right_joint_id, angles_left_deg, angles_right_deg, interpolate=True)`
-分别控制左右臂的某个关节角度。
-
-- `angles_left_deg`, `angles_right_deg`: 单个角度（度）
-- **返回**: `bool`
-
-#### `move_joints_dual_arm(controller, left_angles_deg, right_angles_deg, interpolate=True)`
-控制双臂 14 个关节。
-
-- `left_angles_deg`, `right_angles_deg`: 长度为 7 的角度列表
-- **返回**: `bool`
-
-#### `move_to_zero(controller, arm, interpolate=True)`
-将指定机械臂移动到零位（全 0 角度）。
+- `set_zero(arm='both')`  
+  执行归零校准流程：交互式提示 → 关闭扭矩 → 手动拖动 → 重启扭矩 → 记录零点
+  - `arm`: `"left_arm"`, `"right_arm"` 或 `"both"`（默认 `"both"`）
 
 ---
 
-### 夹爪控制函数
+##  硬件层接口：`bessica_d_sdk.hardware.ServoDriver`
 
-#### `set_gripper_angle(controller, angle_deg, arm="left_arm", wait=True)`
-设置单臂夹爪角度（0~100 度）
+提供底层串口通信、数据解析和电机控制功能。
 
-#### `set_dual_gripper(controller, left_deg, right_deg, wait=True)`
-分别设置左右臂夹爪角度。
+主要方法包括：
+- `connect()` / `disconnect()`
+- `read_joint_angles(arm='both')` / `set_joint_angles(joint_angles, arm, ...)`
+- `read_joint_state(arm='both')` / `read_gripper_data(arm='both')`
+- `set_gripper(angle_rad, arm, ...)`
+- `enable_torque(arm)` / `disable_torque(arm)`
+- `set_zero_position(arm)`
 
-#### `open_gripper(controller, angle_deg=100.0, arm="both", wait=True)`
-将夹爪张开到指定角度（默认最大 100 度）
-
-#### `close_gripper(controller, arm="both", wait=True)`
-关闭夹爪（设为 0 度）
+不推荐用户直接使用此类，建议通过 `SynriaBessicaRobotAPI` 高级接口操作。
 
 ---
 
-### 状态读取与打印
+##  工具函数：`bessica_d_sdk.utils.control`
 
-#### `print_joint_angles(controller, arm="both", read_gripper=True)`
-以角度形式（单位：度）打印当前关节和夹爪角度。
+该模块提供一组高级控制函数，用于简化常用操作。
 
-#### `print_gripper_angles(controller, arm="both")`
-单独打印夹爪角度（单位：度）
+### 关节控制函数：
+
+- `move_joint(controller, joint_id, angle_deg, arm, interpolate=True)`  
+  控制单个关节到指定角度（度）
+
+- `move_joints(controller, angles_deg, arm, interpolate=True)`  
+  设置单臂全部 7 个关节角度（度）
+
+- `move_joints_dual_arm(controller, left_angles_deg, right_angles_deg, interpolate=True)`  
+  控制双臂全部 14 个关节（度）
+
+- `move_to_zero(controller, arm, interpolate=True)`  
+  将指定机械臂移动到零位
+
+### 夹爪控制函数：
+
+- `set_gripper_angle(controller, angle_deg, arm="left_arm", wait=True)`  
+  设置单臂夹爪角度（0~100 度）
+
+- `set_dual_gripper(controller, left_deg, right_deg, wait=True)`  
+  分别设置左右臂夹爪角度
+
+- `open_gripper(controller, angle_deg=100.0, arm="both", wait=True)`  
+  将夹爪张开到指定角度（默认最大 100 度）
+
+- `close_gripper(controller, arm="both", wait=True)`  
+  关闭夹爪（设为 0 度）
+
+### 状态读取与打印：
+
+- `print_joint_angles(controller, arm="both", read_gripper=True)`  
+  以角度形式（单位：度）打印当前关节和夹爪角度
+
+- `print_gripper_angles(controller, arm="both")`  
+  单独打印夹爪角度（单位：度）
+
+---
+
+##  RoboCore 集成
+
+SDK 集成了 [RoboCore](https://github.com/Synria-Robotics/RoboCore) 库，提供高性能运动学和轨迹规划功能：
+
+### 运动学功能（来自 robocore.kinematics）：
+- `forward_kinematics(robot_model, q, backend='numpy', return_end=True)`
+- `inverse_kinematics(robot_model, pose, q_init, backend='numpy', method='dls', ...)`
+- `jacobian(robot_model, q, backend='numpy', method='analytic')`
+
+<!-- ### 轨迹规划功能（来自 robocore.planning）：
+- `cubic_polynomial_trajectory(q_start, q_end, duration, num_points)`
+- `quintic_polynomial_trajectory(q_start, q_end, duration, num_points)`
+- `linear_joint_trajectory(q_start, q_end, duration, num_points)`
+- `linear_cartesian_trajectory(robot_model, pose_start, pose_end, duration, ...)`
+- `trapezoidal_velocity_profile(distance, max_vel, max_acc)` -->
+
+---
+
+## 注意事项
+
+### 双臂系统特点：
+- Bessica-D 是双臂系统，支持 `"left_arm"`, `"right_arm"` 和 `"both"` 三种模式
+- 单臂控制时需明确指定 `arm` 参数
+- 关节角度为 7 个（而非单臂系统的 6 个）
+
+---
+
+##  示例程序（Examples）
+
+SDK 提供了多个示例程序，位于 `examples/` 目录下，展示了如何使用各种功能：
+
+### 基础连接与状态读取：
+
+- **`00_demo_test_connect.py`**  
+  测试机械臂连接功能
+  ```bash
+  python examples/00_demo_test_connect.py --port /dev/ttyACM0
+  ```
+
+- **`03_demo_read_states.py`**  
+  读取并打印机械臂状态（关节角度、位姿、夹爪）
+  ```bash
+  python examples/03_demo_read_states.py --arm left_arm
+  ```
+  - 支持 `--arm` 参数：`left_arm`、`right_arm` 或 `both`
+
+### 运动控制：
+
+- **`05_demo_move_joint.py`**  
+  控制关节运动示例
+  ```bash
+  python examples/05_demo_move_joint.py --arm left_arm
+  ```
+  - 演示单臂/双臂关节角度控制
+  - 展示 `set_joint_target()` 使用方法
+
+- **`04_demo_move_gripper.py`**  
+  控制夹爪开合示例
+  - 演示单臂/双臂夹爪控制
+
+### 运动学：
+
+- **`07_demo_forward_kinematics.py`**  
+  正运动学计算示例
+  ```bash
+  python examples/07_demo_forward_kinematics.py --arm left_arm
+  ```
+  - 从关节角度计算末端执行器位姿
+  - 显示位置、旋转矩阵、欧拉角、四元数
+
+- **`08_demo_inverse_kinematics.py`**  
+  逆运动学控制示例
+  ```bash
+  python examples/08_demo_inverse_kinematics.py --arm left_arm
+  ```
+  - 通过目标位姿求解关节角度并执行运动
+  - 演示 `set_pose_target()` 的完整流程
+
+### 系统功能：
+
+- **`02_demo_zero_calibration.py`**  
+  零点校准程序
+  ```bash
+  python examples/02_demo_zero_calibration.py
+  ```
+  - 交互式归零流程
+  - **警告**：执行前确保机械臂周围无障碍物
+
+- **`01_torque_switch.py`**  
+  扭矩开关控制示例
+
+### 高级功能：
+
+
+- **`06_demo_mujoco.py`**  
+  MuJoCo 仿真相关示例
+
+
+### 运行示例程序：
+
+所有示例程序都支持命令行参数：
+
+```bash
+# 基本参数
+--port <串口路径>      # 例如: /dev/ttyACM0 或 COM3（留空自动查找）
+--baudrate <波特率>    # 默认: 1000000
+
+# 部分示例支持
+--arm <left_arm|right_arm|both>  # 指定控制的机械臂
+```
+
+
+
+如需更多细节，请参考源码文档或查看日志文件输出。

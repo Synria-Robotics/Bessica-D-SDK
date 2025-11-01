@@ -33,72 +33,6 @@ def select_arm():
         print("无效输入，默认为 right_arm")
         return 'right_arm'
 
-def teaching_mode(controller: ArmController):
-    # 如果发现“选择左臂却记录的是右臂”可在运行时调用：
-    # controller.set_block_order(("left_arm","right_arm"))
-    # 这会告诉解析器第一块14字节属于左臂。
-    arm = select_arm()
-    loop_mode = input("是否让机械臂在两个点间往复运动？(y/n): ").strip().lower() == 'y'
-
-    print("记录当前关节角度... (若左右颠倒, 先 Ctrl+C 退出后调用 set_block_order 调整)")
-    controller.set_block_order(("left_arm","right_arm"))
-    if arm != "both":
-        start_pose = [a * controller.RAD_TO_DEG for a in controller.read_joint_angles(arm)]
-    else:
-        raw_angles = controller.read_joint_angles(arm)  # [left, right]
-        start_pose = [
-            [a * controller.RAD_TO_DEG for a in raw_angles[0]],
-            [a * controller.RAD_TO_DEG for a in raw_angles[1]]
-        ]
-
-    input("按enter关闭扭矩，请手动拖拽到目标位置...")
-    controller.disable_torque(arm)
-    input("拖拽完成后按 Enter 继续...")
-
-    print("重新打开扭矩...")
-    controller.enable_torque(arm)
-    time.sleep(1.0)
-
-    print("记录拖拽后的目标关节角度...")
-
-    if arm != "both":
-        goal_pose = [a * controller.RAD_TO_DEG for a in controller.read_joint_angles(arm)]
-    else:
-        raw_angles = controller.read_joint_angles(arm)  # [left, right]
-        goal_pose = [
-            [a * controller.RAD_TO_DEG for a in raw_angles[0]],
-            [a * controller.RAD_TO_DEG for a in raw_angles[1]]
-        ]
-
-    input("按回车执行轨迹")
-
-    def move(a, b):
-        if arm == "both":
-            move_joints_dual_arm(controller, a[0], a[1])
-            time.sleep(1)
-            move_joints_dual_arm(controller, b[0], b[1])
-        else:
-            move_joints(controller, a, arm)
-            time.sleep(1)
-            move_joints(controller, b, arm)
-
-    if loop_mode:
-        print("开始往复运动（Ctrl+C 停止）...")
-        try:
-            i = 1
-            while True:
-                print(f"第{i}次")
-                i += 1
-                move(start_pose, goal_pose)
-                time.sleep(1)
-    
-        except KeyboardInterrupt:
-            print("用户中断，结束拖拽示教模式。")
-    else:
-        print("执行单次来回移动...")
-        move(start_pose, goal_pose)
-
-
 def main():
     controller = ArmController(debug_mode=False)
     if not controller.connect():
@@ -114,9 +48,8 @@ def main():
         print("5. 机械臂归零")
         print("6. 扭矩开关控制")
         print("7. 回到零点")
-        print("8. 拖拽示教模式")
-        print("9. 云台控制 (X/Y)")
-        print("10. 退出")
+        print("8. 云台控制 (X/Y)")
+        print("9. 退出")
         choice = input("请输入操作编号：").strip()
 
         if choice == '1':
@@ -232,9 +165,6 @@ def main():
             move_to_zero(controller, arm)
 
         elif choice == '8':
-            teaching_mode(controller)
-
-        elif choice == '9':
             try:
                 mode = input("选择模式: 1=设置角度(度)  2=回中心(0,0): ").strip()
                 if mode == '2':
@@ -248,7 +178,7 @@ def main():
             except ValueError:
                 print("非法输入：请输入数字")
 
-        elif choice == '10':
+        elif choice == '9':
             print("退出程序")
             break
 

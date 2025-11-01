@@ -19,7 +19,6 @@ import numpy as np
 import json
 import os
 import logging
-import pkg_resources
 # Import from robocore for kinematics and planning
 from robocore.kinematics import inverse_kinematics
 from robocore.modeling import RobotModel
@@ -48,8 +47,6 @@ class SynriaBessicaRobotAPI:
     def __init__(
         self,
                  servo_driver: ServoDriver,
-                 #robot_model: None,
-                 #robot_model: RobotModel,
                  #firmware_version: None,
                  speed_deg_s: float = 20.0,
                  robot_version: str = "v1_0",
@@ -57,7 +54,6 @@ class SynriaBessicaRobotAPI:
         """Initialize robot API.
 
         :param servo_driver: Servo driver instance
-        :param robot_model: Robot model from RoboCore
         :param firmware_version: Firmware version string
         :param speed_deg_s: Default speed in degrees per second
         """
@@ -88,7 +84,7 @@ class SynriaBessicaRobotAPI:
     # ==================== Connection Management ====================
     
     def connect(self) -> bool:
-        """Connect to robot and detect firmware version."""
+        """Connect to robot."""
         result = self.servo_driver.connect()
         return result
     def disconnect(self):
@@ -107,15 +103,16 @@ class SynriaBessicaRobotAPI:
     def set_joint_target(
         self,
         target_joints: List[float],
+        target_joints_second: Optional[List[float]] = None,
         arm: Optional[str] = None,
-        joint_format: str = "rad",
+        joint_format: str = "deg",
         wait: bool = True,
         speed_factor: float = 0.5,
     ) -> bool:
-        """将单臂移动到目标关节角。"""
+        """将单臂移动到目标关节角,或让双臂镜像移动关节角"""
         arm = arm or self.default_arm
         if arm == "both":
-            move_joints_dual_arm(self.servo_driver, target_joints, target_joints)
+            move_joints_dual_arm(self.servo_driver, target_joints, target_joints_second)
         elif arm == "left_arm":
             move_joints(self.servo_driver, target_joints, arm="right_arm")
         elif arm == "right_arm":
@@ -128,6 +125,7 @@ class SynriaBessicaRobotAPI:
 
     def set_pose_target(self,
                          target_pose: List[float],
+                         target_pose_second_arm: Optional[List[float]] = None,
                          backend: str = 'numpy',
                          method: str = 'dls', 
                          display: bool = True, 
@@ -158,29 +156,26 @@ class SynriaBessicaRobotAPI:
                 'message': '未提供 robot_model，无法求解 IK',
                 'q': None
             }
+        if arm == "left_arm" or arm == "right_arm":
+            # 构建位姿矩阵
+            position = np.array(target_pose[:3])
+            quaternion = np.array(target_pose[3:])
+            rotation_matrix = quaternion_to_matrix(quaternion)
+            pose_matrix = make_transform(rotation_matrix, position)
+            if use_random_init:
+                q_init = self._generate_random_q(scale=0.5)
+                if display:
+                    logger.info("使用随机初始值")
+            else:
+                q_init = self.get_joints(arm=arm)
+                if q_init is None:
+                    return {
+                        'success': False,
+                        'message': '无法获取当前关节角度',
+                        'q': None
+                    }
 
-        # 构建位姿矩阵
-        position = np.array(target_pose[:3])
-        quaternion = np.array(target_pose[3:])
-        rotation_matrix = quaternion_to_matrix(quaternion)
-        pose_matrix = make_transform(rotation_matrix, position)
-        if use_random_init:
-            q_init = self._generate_random_q(scale=0.5)
-            if display:
-                logger.info("使用随机初始值")
-        else:
-            q_init = self.get_joints(arm=arm)
-            if q_init is None:
-                return {
-                    'success': False,
-                    'message': '无法获取当前关节角度',
-                    'q': None
-                }
-        if display:
-            logger.info(f"初始关节角度 (rad): {[f'{q:+.4f}' for q in q_init]}")
-            logger.info(f"初始关节角度 (deg): {[f'{np.rad2deg(q):+.2f}' for q in q_init]}")
-            logger.info(f"正在求解IK (方法: {method},求解臂{arm} 最大迭代: {max_iters})...")
-        ik_result = inverse_kinematics(
+            ik_result = inverse_kinematics(
             self.robot_model,
             pose_matrix,
             q_init,
@@ -192,32 +187,123 @@ class SynriaBessicaRobotAPI:
             multi_start=multi_start,
             multi_noise=0.3,
             use_analytic_jacobian=True
-        )
-
-        if ik_result.get('success'):
-            if display:
-                logger.info("✓ IK 求解成功!")
-                logger.info(f"  迭代次数: {ik_result.get('iters')}")
-                logger.info(f"  位置误差: {ik_result.get('pos_err', 0.0):.6e} m")
-                logger.info(f"  姿态误差: {ik_result.get('ori_err', 0.0):.6e} rad")
-                logger.info(f"  关节角度 (rad): {[f'{q:+.4f}' for q in ik_result['q']]}")
-                logger.info(f"  关节角度 (deg): {[f'{np.rad2deg(q):+.2f}' for q in ik_result['q']]}")
-
-            if execute:
-                ok = move_joints(self.servo_driver, ik_result['q'], arm=arm, interpolate=True)
-                ik_result['motion_executed'] = bool(ok)
-            else:
-                ik_result['motion_executed'] = False
+            )
+            if ik_result['success']:
                 if display:
-                    logger.info("  (未执行运动，execute=False)")
-            return ik_result
-        else:
+                    logger.info("✓ IK 求解成功!")
+                    logger.info(f"  迭代次数: {ik_result['iters']}")
+                    logger.info(f"  位置误差: {ik_result['pos_err']:.6e} m")
+                    logger.info(f"  姿态误差: {ik_result['ori_err']:.6e} rad")
+                    logger.info(f"  关节角度 (rad): {[f'{q:+.4f}' for q in ik_result['q']]}")
+                    logger.info(f"  关节角度 (deg): {[f'{np.rad2deg(q):+.2f}' for q in ik_result['q']]}")
+                if execute:
+                    q = np.rad2deg(ik_result['q'])
+                    ok = self.set_joint_target( q, arm=arm)
+                    ik_result['motion_executed'] = bool(ok)
+                else:
+                    ik_result['motion_executed'] = False
+                    if display:
+                        logger.info("  (未执行运动，execute=False)")
+                return ik_result
+            else:
+                if display:
+                    logger.error(f"✗ IK 求解失败: {ik_result.get('message', '未知错误')}")
+                    logger.error(f"  迭代次数: {ik_result.get('iters', 'N/A')}")
+                    logger.error(f"  位置误差: {ik_result.get('pos_err', float('inf')):.6e} m")
+                    logger.error(f"  姿态误差: {ik_result.get('ori_err', float('inf')):.6e} rad")
+                return ik_result
+        if arm == "both":
+            position_l = np.array(target_pose[:3])
+            quaternion_l = np.array(target_pose[3:])
+            rotation_matrix_l = quaternion_to_matrix(quaternion_l)
+            pose_matrix_l = make_transform(rotation_matrix_l, position_l)
+            position_r = np.array(target_pose_second_arm[:3])
+            quaternion_r = np.array(target_pose_second_arm[3:])
+            rotation_matrix_r = quaternion_to_matrix(quaternion_r)
+            pose_matrix_r = make_transform(rotation_matrix_r, position_r)
+            # Get initial guess
+            if use_random_init:
+                # Generate random initial guess within joint limits
+                q_init_l = self._generate_random_q(scale=0.5)
+                q_init_r = self._generate_random_q(scale=0.5)
+                if display:
+                    logger.info("使用随机初始值")
+            else:
+                q_init_l = self.get_joints(arm="left_arm")
+                q_init_r = self.get_joints(arm="right_arm")
+                if q_init_l is None or q_init_r is None:
+                    return {
+                        'success': False,
+                        'message': '无法获取当前关节角度',
+                        'ql': None,
+                        'qr': None
+                    }
+            
             if display:
-                logger.error(f"✗ IK 求解失败: {ik_result.get('message', '未知错误')}")
-                logger.error(f"  迭代次数: {ik_result.get('iters', 'N/A')}")
-                logger.error(f"  位置误差: {ik_result.get('pos_err', float('inf')):.6e} m")
-                logger.error(f"  姿态误差: {ik_result.get('ori_err', float('inf')):.6e} rad")
-            return ik_result
+                logger.info(f"左臂初始关节角度 (rad): {[f'{q:+.4f}' for q in q_init_l]}")
+                logger.info(f"左臂初始关节角度 (deg): {[f'{np.rad2deg(q):+.2f}' for q in q_init_l]}")
+                logger.info(f"右臂初始关节角度 (rad): {[f'{q:+.4f}' for q in q_init_r]}")
+                logger.info(f"右臂初始关节角度 (deg): {[f'{np.rad2deg(q):+.2f}' for q in q_init_r]}")
+                logger.info(f"正在求解IK (方法: {method}, 最大迭代: {max_iters})...")
+            ik_result_l = inverse_kinematics(
+                self.robot_model,
+                pose_matrix_l,
+                q_init_l,
+                backend=backend,
+                method=method,
+                max_iters=max_iters,
+                pos_tol=tolerance,
+                ori_tol=tolerance,
+                multi_start=multi_start,
+                multi_noise=0.3,
+                use_analytic_jacobian=True
+            )
+            ik_result_r = inverse_kinematics(
+                self.robot_model,
+                pose_matrix_r,
+                q_init_r,
+                backend=backend,
+                method=method,
+                max_iters=max_iters,
+                pos_tol=tolerance,
+                ori_tol=tolerance,
+                multi_start=multi_start,
+                multi_noise=0.3,
+                use_analytic_jacobian=True
+            )
+            if ik_result_l.get('success') and ik_result_r.get('success'):
+                if display:
+                    logger.info("✓ IK 求解成功!")
+                    logger.info(f"  左臂迭代次数: {ik_result_l.get('iters')}")
+                    logger.info(f"  左臂位置误差: {ik_result_l.get('pos_err', 0.0):.6e} m")
+                    logger.info(f"  左臂姿态误差: {ik_result_l.get('ori_err', 0.0):.6e} rad")
+                    logger.info(f"  左关节角度 (rad): {[f'{q:+.4f}' for q in ik_result_l['q']]}")
+                    logger.info(f"  左关节角度 (deg): {[f'{np.rad2deg(q):+.2f}' for q in ik_result_l['q']]}")
+                    logger.info(f"  右臂迭代次数: {ik_result_r.get('iters')}")
+                    logger.info(f"  右臂位置误差: {ik_result_r.get('pos_err', 0.0):.6e} m")
+                    logger.info(f"  右臂姿态误差: {ik_result_r.get('ori_err', 0.0):.6e} rad")
+                    logger.info(f"  右关节角度 (rad): {[f'{q:+.4f}' for q in ik_result_r['q']]}")
+                    logger.info(f"  右关节角度 (deg): {[f'{np.rad2deg(q):+.2f}' for q in ik_result_r['q']]}")
+                if execute:
+                    q_l = np.rad2deg(ik_result_l['q'])
+                    q_r = np.rad2deg(ik_result_r['q'])
+                    q = [q_l, q_r]
+                    ok = self.set_joint_target( target_joints=q_l,target_joints_second=q_r, arm="both")
+                    ik_result_l['motion_executed'] = bool(ok)
+                    ik_result_r['motion_executed'] = bool(ok)
+                else:
+                    ik_result_l['motion_executed'] = False
+                    ik_result_r['motion_executed'] = False
+                    if display:
+                        logger.info("  (未执行运动，execute=False)")
+                return ik_result_l, ik_result_r
+            else:
+                if display:
+                    logger.error(f"✗ IK 求解失败: {ik_result.get('message', '未知错误')}")
+                    logger.error(f"  迭代次数: {ik_result.get('iters', 'N/A')}")
+                    logger.error(f"  位置误差: {ik_result.get('pos_err', float('inf')):.6e} m")
+                    logger.error(f"  姿态误差: {ik_result.get('ori_err', float('inf')):.6e} rad")
+                return ik_result
 
     # 插值接口（显式）
     # def set_joint_target_interpolation(
@@ -261,14 +347,15 @@ class SynriaBessicaRobotAPI:
         - command: 'open' or 'close'
         - value: 角度值（单位：度，0~100），内部转换为弧度传给 ServoDriver
         """
+        arm = arm or self.default_arm
         if (command is None) == (value is None):
             logger.error("必须二选一提供 command 或 value")
             return False
         if command is not None:
             if command == 'open':
-                value = 0.0
+                value = 0.1
             elif command == 'close':
-                value = 100.0
+                value = 99.9
             else:
                 logger.error("command 仅支持 'open'/'close'")
                 return False
@@ -288,14 +375,13 @@ class SynriaBessicaRobotAPI:
         self.default_arm = "both"
         arm = arm or self.default_arm
         joint_angles = self.servo_driver.read_joint_angles(arm)
-        logger.info(f"{arm}'s joint_angles: {joint_angles}")
+        # logger.info(f"{arm}'s joint_angles: {joint_angles}")
         
         return joint_angles
 
     def get_gripper(self, arm: Optional[str] = None) -> Optional[Union[float, Tuple[float, float]]]:
         arm = arm or self.default_arm
         try:
-            logger.info(f"{arm}'s gripper: {self.servo_driver.read_gripper_data(arm if arm in ['left_arm', 'right_arm'] else 'both')}")
             return self.servo_driver.read_gripper_data(arm if arm in ['left_arm', 'right_arm'] else 'both')
         except Exception:
             return None
@@ -305,22 +391,49 @@ class SynriaBessicaRobotAPI:
             logger.error("未安装 RoboCore 或未提供 robot_model，无法计算位姿")
             return None
         arm = arm or self.default_arm
-        joints = self.get_joints(arm=arm)
-        if not joints or not isinstance(joints, list):
-            logger.error("无法获取关节角度")
-            return None
-        T_fk = forward_kinematics(self.robot_model, joints, backend='numpy', return_end=True)
-        position = T_fk[:3, 3]
-        rotation = T_fk[:3, :3]
-        euler = matrix_to_euler(rotation, seq='xyz')
-        quat = matrix_to_quaternion(rotation)
-        return {
-            'transform': T_fk,
-            'position': position,
-            'rotation': rotation,
-            'euler_xyz': euler,
-            'quaternion_xyzw': quat,
-        }
+        if arm == "both":
+            joints_l = self.get_joints(arm="left_arm")
+            joints_r = self.get_joints(arm="right_arm")
+            joints = [joints_l, joints_r]
+            T_fk_l = forward_kinematics(self.robot_model, joints_l, backend='numpy', return_end=True)
+            position_l = T_fk_l[:3, 3]
+            rotation_l = T_fk_l[:3, :3]
+            euler_l = matrix_to_euler(rotation_l, seq='xyz')
+            quat_l = matrix_to_quaternion(rotation_l)
+            output_to_ik_l = [position_l[0], position_l[1], position_l[2], quat_l[0], quat_l[1], quat_l[2], quat_l[3]]
+            T_fk_r = forward_kinematics(self.robot_model, joints_r, backend='numpy', return_end=True)
+            position_r = T_fk_r[:3, 3]
+            rotation_r = T_fk_r[:3, :3]
+            euler_r = matrix_to_euler(rotation_r, seq='xyz')
+            quat_r = matrix_to_quaternion(rotation_r)
+            output_to_ik_r = [position_r[0], position_r[1], position_r[2], quat_r[0], quat_r[1], quat_r[2], quat_r[3]]
+            return {
+                'transform': [T_fk_l, T_fk_r],
+                'position': [position_l, position_r],
+                'rotation': [rotation_l, rotation_r],
+                'euler_xyz': [euler_l, euler_r],
+                'quaternion_xyzw': [quat_l, quat_r],
+                'output_to_ik': [output_to_ik_l, output_to_ik_r],
+            }
+        elif arm == "left_arm" or arm == "right_arm":
+            joints = self.get_joints(arm=arm)
+            if not joints or not isinstance(joints, list):
+                logger.error("无法获取关节角度")
+                return None
+            T_fk = forward_kinematics(self.robot_model, joints, backend='numpy', return_end=True)
+            position = T_fk[:3, 3]
+            rotation = T_fk[:3, :3]
+            euler = matrix_to_euler(rotation, seq='xyz')
+            quat = matrix_to_quaternion(rotation)
+            output_to_ik=[position[0], position[1], position[2], quat[0], quat[1], quat[2], quat[3]]
+            return {
+                'transform': T_fk,
+                'position': position,
+                'rotation': rotation,
+                'euler_xyz': euler,
+                'quaternion_xyzw': quat,
+                'output_to_ik': output_to_ik,
+            }
 
     # def get_firmware_version(self, timeout: float = 5.0, send_interval: float = 0.2) -> Optional[str]:
     #     # 优先读缓存
@@ -368,7 +481,7 @@ class SynriaBessicaRobotAPI:
         logger.info(f"即将将{arm}关闭扭矩，请确定环境正常,输入enter继续...")
         input()
         self.torque_control(command="off", arm=arm)
-        logger.info(f"即将将{arm}设置为零点，请确定环境正常，输入enter继续...")
+        logger.info(f"{arm}扭矩已关闭，请手动拖动机械臂到零点位置，然后按enter继续来设置该位置为零点...")
         input()
         result = self.servo_driver.set_zero_position(arm)
         self.torque_control(command="on", arm=arm)
@@ -463,6 +576,34 @@ class SynriaBessicaRobotAPI:
     #             return False
     #         time.sleep(delay)
     #     return True
+
+    # ==================== 辅助方法 ====================
+    def _generate_random_q(self, scale: float = 0.5) -> List[float]:
+        """Generate random joint configuration within limits.
+
+        :param scale: Range scale factor within joint limits
+        :return: Random joint angles in radians (7 DOF for single arm)
+        """
+        if not hasattr(self, 'robot_model') or self.robot_model is None:
+            logger.warning("未提供 robot_model，使用默认关节范围生成随机值")
+            rng = np.random.default_rng()
+            return [float(rng.uniform(-1.0, 1.0)) for _ in range(7)]
+        
+        rng = np.random.default_rng()
+        q = [0.0] * self.robot_model.num_dof()
+        
+        for js in self.robot_model._actuated:
+            lo, hi = -1.0, 1.0
+            if js.limit:
+                if js.limit[0] is not None:
+                    lo = js.limit[0]
+                if js.limit[1] is not None:
+                    hi = js.limit[1]
+            mid = 0.5 * (lo + hi)
+            span = 0.5 * (hi - lo) * scale
+            q[js.index] = float(rng.uniform(mid - span, mid + span))
+        
+        return q
 
     # # ==================== 打印/辅助 ====================
     # def print_state(self, arm: str = 'both', output_format: str = 'deg'):
