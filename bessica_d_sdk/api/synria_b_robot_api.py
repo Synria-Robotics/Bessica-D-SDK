@@ -34,7 +34,7 @@ from robocore.planning.trajectory import (
     cartesian_waypoint_trajectory
 )
 from ..hardware import ServoDriver
-from ..utils.control import move_joints_dual_arm, set_dual_gripper, control_move, move_joints,set_gripper_angle,open_gripper,close_gripper
+from ..utils.control import move_joints_dual_arm, set_dual_gripper, control_move, move_joints, set_gripper_angle, open_gripper, close_gripper
 # from ..execution import HardwareExecutor, JointPlanner
 # from ..utils.logger import logger
 logger = logging.getLogger("SynriaBessicaRobotAPI")
@@ -46,11 +46,11 @@ class SynriaBessicaRobotAPI:
 
     def __init__(
         self,
-                 servo_driver: ServoDriver,
-                 #firmware_version: None,
-                 speed_deg_s: float = 20.0,
-                 robot_version: str = "v1_0",
-                 ):
+        servo_driver: ServoDriver,
+        # firmware_version: None,
+        speed_deg_s: float = 20.0,
+        robot_version: str = "v1_0",
+    ):
         """Initialize robot API.
 
         :param servo_driver: Servo driver instance
@@ -60,20 +60,18 @@ class SynriaBessicaRobotAPI:
         self.servo_driver = servo_driver
         # 在 API 内部创建 RobotModel 实例
         try:
-            from synriard.urdf.Bessica_D_v1_0 import Bessica_D_Covered
-                # 你当前的资源结构是 Bessica_D_v1_0/Bessica_D_Covered.urdf
-                # 这类包通常导出一个 .urdf 路径属性，如：
-                urdf_path = Bessica_D_Covered.urdf
-                self.robot_model = RobotModel(str(urdf_path))
+            from synriard import get_model_path
+            urdf_path = get_model_path("Bessica_D", version=robot_version, variant="covered")
+            self.robot_model = RobotModel(str(urdf_path))
         except Exception as e:
-                # 本地兜底（按你项目里已有的 Alicia fallback 模式）
-                from pathlib import Path
-                default_urdf = Path(__file__).parent.parent / "assets" / "robot" / "urdf" / f"Alicia-D_{robot_version}" / "alicia_duo_with_gripper.urdf"
-                if default_urdf.exists():
-                    self.robot_model = RobotModel(str(default_urdf), end_link='tool0')
-                raise RuntimeError(f"无法创建 RobotModel，请检查 synriard 或本地 URDF。错误: {e}")
-        #self.robot_model = robot_model
-        #self.firmware_version = firmware_version
+            # 本地兜底（按你项目里已有的 Alicia fallback 模式）
+            from pathlib import Path
+            default_urdf = Path(__file__).parent.parent / "assets" / "robot" / "urdf" / f"Alicia-D_{robot_version}" / "alicia_duo_with_gripper.urdf"
+            if default_urdf.exists():
+                self.robot_model = RobotModel(str(default_urdf), end_link='tool0')
+            raise RuntimeError(f"无法创建 RobotModel，请检查 synriard 或本地 URDF。错误: {e}")
+        # self.robot_model = robot_model
+        # self.firmware_version = firmware_version
         self.firmware_new = False
         self.speed_deg_s = speed_deg_s
         # self.hardware_executor = HardwareExecutor(servo_driver)
@@ -82,11 +80,12 @@ class SynriaBessicaRobotAPI:
         self.default_arm = "both"
 
     # ==================== Connection Management ====================
-    
+
     def connect(self) -> bool:
         """Connect to robot."""
         result = self.servo_driver.connect()
         return result
+
     def disconnect(self):
         """Disconnect from robot."""
         self.servo_driver.stop_update_thread()
@@ -98,7 +97,6 @@ class SynriaBessicaRobotAPI:
         if arm == "both":
             move_joints_dual_arm(self.servo_driver, self.home_angles, self.home_angles)
             open_gripper(self.servo_driver, 0.0, arm="both")
-
 
     def set_joint_target(
         self,
@@ -120,22 +118,22 @@ class SynriaBessicaRobotAPI:
         else:
             logger.error(f"请输入指定要控制的机械臂，当前指定机械臂为{arm}")
             return False
-        #control_move(self.servo_driver, target_joints, arm=arm)
-        #return True
+        # control_move(self.servo_driver, target_joints, arm=arm)
+        # return True
 
     def set_pose_target(self,
-                         target_pose: List[float],
-                         target_pose_second_arm: Optional[List[float]] = None,
-                         backend: str = 'numpy',
-                         method: str = 'dls', 
-                         display: bool = True, 
-                         tolerance: float = 1e-4, 
-                         max_iters: int = 100, 
-                         multi_start: int = 0, 
-                         use_random_init: bool = False, 
-                         speed_factor: float = 1.0, 
-                         arm: str = "both",
-                         execute: bool = True) -> Dict:
+                        target_pose: List[float],
+                        target_pose_second_arm: Optional[List[float]] = None,
+                        backend: str = 'numpy',
+                        method: str = 'dls',
+                        display: bool = True,
+                        tolerance: float = 1e-4,
+                        max_iters: int = 100,
+                        multi_start: int = 0,
+                        use_random_init: bool = False,
+                        speed_factor: float = 1.0,
+                        arm: str = "both",
+                        execute: bool = True) -> Dict:
         """基于逆解将末端移动到目标位姿。
 
         :param target_pose: 目标位姿 [x, y, z, qx, qy, qz, qw]
@@ -176,17 +174,17 @@ class SynriaBessicaRobotAPI:
                     }
 
             ik_result = inverse_kinematics(
-            self.robot_model,
-            pose_matrix,
-            q_init,
-            backend=backend,
-            method=method,
-            max_iters=max_iters,
-            pos_tol=tolerance,
-            ori_tol=tolerance,
-            multi_start=multi_start,
-            multi_noise=0.3,
-            use_analytic_jacobian=True
+                self.robot_model,
+                pose_matrix,
+                q_init,
+                backend=backend,
+                method=method,
+                max_iters=max_iters,
+                pos_tol=tolerance,
+                ori_tol=tolerance,
+                multi_start=multi_start,
+                multi_noise=0.3,
+                use_analytic_jacobian=True
             )
             if ik_result['success']:
                 if display:
@@ -198,7 +196,7 @@ class SynriaBessicaRobotAPI:
                     logger.info(f"  关节角度 (deg): {[f'{np.rad2deg(q):+.2f}' for q in ik_result['q']]}")
                 if execute:
                     q = np.rad2deg(ik_result['q'])
-                    ok = self.set_joint_target( q, arm=arm)
+                    ok = self.set_joint_target(q, arm=arm)
                     ik_result['motion_executed'] = bool(ok)
                 else:
                     ik_result['motion_executed'] = False
@@ -238,7 +236,7 @@ class SynriaBessicaRobotAPI:
                         'ql': None,
                         'qr': None
                     }
-            
+
             if display:
                 logger.info(f"左臂初始关节角度 (rad): {[f'{q:+.4f}' for q in q_init_l]}")
                 logger.info(f"左臂初始关节角度 (deg): {[f'{np.rad2deg(q):+.2f}' for q in q_init_l]}")
@@ -288,7 +286,7 @@ class SynriaBessicaRobotAPI:
                     q_l = np.rad2deg(ik_result_l['q'])
                     q_r = np.rad2deg(ik_result_r['q'])
                     q = [q_l, q_r]
-                    ok = self.set_joint_target( target_joints=q_l,target_joints_second=q_r, arm="both")
+                    ok = self.set_joint_target(target_joints=q_l, target_joints_second=q_r, arm="both")
                     ik_result_l['motion_executed'] = bool(ok)
                     ik_result_r['motion_executed'] = bool(ok)
                 else:
@@ -360,11 +358,11 @@ class SynriaBessicaRobotAPI:
                 logger.error("command 仅支持 'open'/'close'")
                 return False
         # value 单位: 度 -> 弧度
-        #angle_rad = float(value) * np.pi / 180.0
+        # angle_rad = float(value) * np.pi / 180.0
         if arm == "left_arm" or arm == "right_arm":
             set_gripper_angle(self.servo_driver, value, arm=arm, wait=wait_for_completion)
         elif arm == "both":
-            set_dual_gripper(self.servo_driver, value, value, wait=wait_for_completion) #wait=wait_for_completion)
+            set_dual_gripper(self.servo_driver, value, value, wait=wait_for_completion)  # wait=wait_for_completion)
         else:
             logger.error(f"请输入指定要控制的机械臂，当前指定机械臂为{arm}")
             return False
@@ -376,7 +374,7 @@ class SynriaBessicaRobotAPI:
         arm = arm or self.default_arm
         joint_angles = self.servo_driver.read_joint_angles(arm)
         # logger.info(f"{arm}'s joint_angles: {joint_angles}")
-        
+
         return joint_angles
 
     def get_gripper(self, arm: Optional[str] = None) -> Optional[Union[float, Tuple[float, float]]]:
@@ -425,7 +423,7 @@ class SynriaBessicaRobotAPI:
             rotation = T_fk[:3, :3]
             euler = matrix_to_euler(rotation, seq='xyz')
             quat = matrix_to_quaternion(rotation)
-            output_to_ik=[position[0], position[1], position[2], quat[0], quat[1], quat[2], quat[3]]
+            output_to_ik = [position[0], position[1], position[2], quat[0], quat[1], quat[2], quat[3]]
             return {
                 'transform': T_fk,
                 'position': position,
@@ -486,7 +484,6 @@ class SynriaBessicaRobotAPI:
         result = self.servo_driver.set_zero_position(arm)
         self.torque_control(command="on", arm=arm)
         logger.info(f"{arm}归零成功: {result}")
-
 
     # ==================== 轨迹接口（可用 RoboCore 时增强） ====================
     # def move_joint_trajectory(
@@ -578,6 +575,7 @@ class SynriaBessicaRobotAPI:
     #     return True
 
     # ==================== 辅助方法 ====================
+
     def _generate_random_q(self, scale: float = 0.5) -> List[float]:
         """Generate random joint configuration within limits.
 
@@ -588,10 +586,10 @@ class SynriaBessicaRobotAPI:
             logger.warning("未提供 robot_model，使用默认关节范围生成随机值")
             rng = np.random.default_rng()
             return [float(rng.uniform(-1.0, 1.0)) for _ in range(7)]
-        
+
         rng = np.random.default_rng()
         q = [0.0] * self.robot_model.num_dof()
-        
+
         for js in self.robot_model._actuated:
             lo, hi = -1.0, 1.0
             if js.limit:
@@ -602,7 +600,7 @@ class SynriaBessicaRobotAPI:
             mid = 0.5 * (lo + hi)
             span = 0.5 * (hi - lo) * scale
             q[js.index] = float(rng.uniform(mid - span, mid + span))
-        
+
         return q
 
     # # ==================== 打印/辅助 ====================

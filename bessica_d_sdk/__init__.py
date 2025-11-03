@@ -36,9 +36,9 @@ from robocore.planning import (
     trapezoidal_velocity_profile
 )
 
-__version__ = "6.0.0"
-__author__ = "Bessica-D Team"
-__description__ = "Bessica-D机械臂SDK v1.0.0 - Bridged with RoboCore"
+__version__ = "3.0.0"
+__author__ = "Synria Robotics"
+__description__ = "Bessica-D机械臂SDK v3.0.0 - Bridged with RoboCore"
 
 __all__ = [
     "SynriaBessicaRobotAPI",
