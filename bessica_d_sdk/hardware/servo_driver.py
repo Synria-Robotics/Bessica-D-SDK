@@ -48,7 +48,7 @@ class ServoDriver:
     BOTH_ARM = 0x03
 
 
-    def __init__(self, port: str = "/dev/ttyACM0", baudrate: int = 1000000, debug_mode: bool = False, poll_mode: bool = True):
+    def __init__(self, port: str = "", baudrate: int = 1000000, debug_mode: bool = False, poll_mode: bool = True):
         """
         初始化机械臂控制器
         
