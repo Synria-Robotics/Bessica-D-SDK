@@ -21,7 +21,7 @@ from robocore.utils.beauty_logger import beauty_print_array, beauty_print
 # from robocore.bridge.sim.mujoco.interactive_dual_arm import InteractiveDualArmIK
 # from robocore.utils.interactive_ik import InteractiveDualArmIK
 from robocore.utils.control_utils import InteractiveDualArmIK
-from robot_descriptions.mjcf.Bessica_D_v1_0 import Bessica_D_Covered
+from synriard.mjcf.Bessica_D_v1_0 import Bessica_D_Covered
 mjcf_path = Bessica_D_Covered.xml
 # End-effector links
 left_end = "left_arm_link7"

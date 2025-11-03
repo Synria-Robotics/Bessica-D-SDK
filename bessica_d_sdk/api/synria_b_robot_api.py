@@ -60,7 +60,7 @@ class SynriaBessicaRobotAPI:
         self.servo_driver = servo_driver
         # 在 API 内部创建 RobotModel 实例
         try:
-                from robot_descriptions.urdf.Bessica_D_v1_0 import Bessica_D_Covered
+            from synriard.urdf.Bessica_D_v1_0 import Bessica_D_Covered
                 # 你当前的资源结构是 Bessica_D_v1_0/Bessica_D_Covered.urdf
                 # 这类包通常导出一个 .urdf 路径属性，如：
                 urdf_path = Bessica_D_Covered.urdf
@@ -71,7 +71,7 @@ class SynriaBessicaRobotAPI:
                 default_urdf = Path(__file__).parent.parent / "assets" / "robot" / "urdf" / f"Alicia-D_{robot_version}" / "alicia_duo_with_gripper.urdf"
                 if default_urdf.exists():
                     self.robot_model = RobotModel(str(default_urdf), end_link='tool0')
-                raise RuntimeError(f"无法创建 RobotModel，请检查 robot_descriptions 或本地 URDF。错误: {e}")
+                raise RuntimeError(f"无法创建 RobotModel，请检查 synriard 或本地 URDF。错误: {e}")
         #self.robot_model = robot_model
         #self.firmware_version = firmware_version
         self.firmware_new = False

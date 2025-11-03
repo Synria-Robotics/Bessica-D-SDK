@@ -90,12 +90,12 @@ __all__ = [
     
     # # 创建运动学层 (使用 RoboCore)
     # try:
-    #     from robot_descriptions import urdf
+#     from synriard import urdf
     #     urdf_path = getattr(getattr(urdf, "Bessica_D_v1_0")).urdf
     #     #end_link = 'tool0'
     #     robot_model = RobotModel(str(urdf_path))
     # except ImportError:
-    #     print("Warning: robot_descriptions not found, using default URDF path")
+#     print("Warning: synriard not found, using default URDF path")
     #     # Fallback to default path
     #     from pathlib import Path
     #     default_urdf = Path(__file__).parent.parent / "assets" / "robot" / "urdf" / f"Alicia-D_{robot_version}" / "alicia_duo_with_gripper.urdf"
