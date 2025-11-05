@@ -26,15 +26,15 @@ from .hardware import ServoDriver
 #from .execution import HardwareExecutor
 
 # Import from RoboCore for kinematics and modeling
-# from robocore.modeling import RobotModel
-# from robocore.kinematics import forward_kinematics, inverse_kinematics, jacobian
-# from robocore.planning import (
-#     cubic_polynomial_trajectory,
-#     quintic_polynomial_trajectory,
-#     linear_joint_trajectory,
-#     linear_cartesian_trajectory,
-#     trapezoidal_velocity_profile
-# )
+from robocore.modeling import RobotModel
+from robocore.kinematics import forward_kinematics, inverse_kinematics, jacobian
+from robocore.planning import (
+    cubic_polynomial_trajectory,
+    quintic_polynomial_trajectory,
+    linear_joint_trajectory,
+    linear_cartesian_trajectory,
+    trapezoidal_velocity_profile
+)
 
 __version__ = "3.0.0"
 __author__ = "Synria Robotics"

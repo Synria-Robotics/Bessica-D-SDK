@@ -34,8 +34,8 @@ def main(args):
         joint_angles = robot.get_joints(arm=args.arm)
         logger.info(f"关节角度: {joint_angles}")
         time.sleep(0.3)
-        # pose = robot.get_pose(arm=args.arm)
-        # logger.info(f"末端执行器位姿: {pose}")
+        pose = robot.get_pose(arm=args.arm)
+        logger.info(f"末端执行器位姿: {pose}")
         gripper = robot.get_gripper(arm=args.arm)
         logger.info(f"夹爪状态: {gripper}")
         

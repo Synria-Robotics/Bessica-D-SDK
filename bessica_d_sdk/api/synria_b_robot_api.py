@@ -19,20 +19,19 @@ import numpy as np
 import json
 import os
 import logging
-# Import from robocore for kinematics and planning
-# from robocore.kinematics import inverse_kinematics
-# from robocore.modeling import RobotModel
-# from robocore.transform import make_transform, quaternion_to_matrix
-# from robocore.kinematics import forward_kinematics
-# from robocore.transform import matrix_to_euler, matrix_to_quaternion
-# from robocore.planning.trajectory import (
-#     cubic_polynomial_trajectory,
-#     quintic_polynomial_trajectory,
-#     linear_joint_trajectory,
-#     linear_cartesian_trajectory,
-#     circular_cartesian_trajectory,
-#     cartesian_waypoint_trajectory
-# )
+from robocore.kinematics import inverse_kinematics
+from robocore.modeling import RobotModel
+from robocore.transform import make_transform, quaternion_to_matrix
+from robocore.kinematics import forward_kinematics
+from robocore.transform import matrix_to_euler, matrix_to_quaternion
+from robocore.planning.trajectory import (
+    cubic_polynomial_trajectory,
+    quintic_polynomial_trajectory,
+    linear_joint_trajectory,
+    linear_cartesian_trajectory,
+    circular_cartesian_trajectory,
+    cartesian_waypoint_trajectory
+)
 from ..hardware import ServoDriver
 # from ..execution import HardwareExecutor, JointPlanner
 # from ..utils.logger import logger
@@ -58,18 +57,18 @@ class SynriaBessicaRobotAPI:
         """
         self.servo_driver = servo_driver
         # 在 API 内部创建 RobotModel 实例
-        # try:
-        #     from synriard import get_model_path
-        #     urdf_path = get_model_path("Bessica_D", version=robot_version, variant="Covered")
-        #     self.robot_model = RobotModel(str(urdf_path))
-        # except Exception as e:
-        #     # 本地兜底（按你项目里已有的 Alicia fallback 模式）
-        #     from pathlib import Path
-        #     # 自行根据本地路径来更改并找到bessicia的urdf文件
-        #     default_urdf = Path(__file__).parent.parent / "assets" / "robot" / "urdf" / f"Alicia-D_{robot_version}" / "alicia_duo_with_gripper.urdf"
-        #     if default_urdf.exists():
-        #         self.robot_model = RobotModel(str(default_urdf), end_link='tool0')
-        #     raise RuntimeError(f"无法创建 RobotModel，请检查 synriard 或本地 URDF。错误: {e}")
+        try:
+            from synriard import get_model_path
+            urdf_path = get_model_path("Bessica_D", version=robot_version, variant="covered")
+            self.robot_model = RobotModel(str(urdf_path))
+        except Exception as e:
+            # 本地兜底（按你项目里已有的 Alicia fallback 模式）
+            from pathlib import Path
+            # 自行根据本地路径来更改并找到bessicia的urdf文件
+            default_urdf = Path(__file__).parent.parent / "assets" / "robot" / "urdf" / f"Alicia-D_{robot_version}" / "alicia_duo_with_gripper.urdf"
+            if default_urdf.exists():
+                self.robot_model = RobotModel(str(default_urdf), end_link='tool0')
+            raise RuntimeError(f"无法创建 RobotModel，请检查 synriard 或本地 URDF。错误: {e}")
         # self.robot_model = robot_model
         # self.firmware_version = firmware_version
         self.firmware_new = False
@@ -214,8 +213,9 @@ class SynriaBessicaRobotAPI:
                     logger.info(f"  关节角度 (deg): {[f'{np.rad2deg(q):+.2f}' for q in ik_result['q']]}")
                 if execute:
                     q = np.rad2deg(ik_result['q'])
-                    ok = self.set_joint_target(q, arm=arm)
-                    ik_result['motion_executed'] = bool(ok)
+                    print(f"q: {q}")
+                    success = self.set_joint_target(q.tolist(), arm=arm)
+                    ik_result['motion_executed'] = bool(success)
                 else:
                     ik_result['motion_executed'] = False
                     if display:
@@ -303,8 +303,8 @@ class SynriaBessicaRobotAPI:
                 if execute:
                     q_l = np.rad2deg(ik_result_l['q'])
                     q_r = np.rad2deg(ik_result_r['q'])
-                    q = [q_l, q_r]
-                    ok = self.set_joint_target(target_joints=q_l, target_joints_second=q_r, arm="both")
+                    q = [q_l.tolist(), q_r.tolist()]
+                    ok = self.set_joint_target(target_joints=q, arm="both")
                     ik_result_l['motion_executed'] = bool(ok)
                     ik_result_r['motion_executed'] = bool(ok)
                 else:
@@ -510,94 +510,124 @@ class SynriaBessicaRobotAPI:
         self.torque_control(command="on", arm=arm)
         logger.info(f"{arm}归零成功: {result}")
 
-    # ==================== 轨迹接口（可用 RoboCore 时增强） ====================
-    # def move_joint_trajectory(
-    #     self,
-    #     q_end: List[float],
-    #     arm: Optional[str] = None,
-    #     duration: float = 2.0,
-    #     method: str = 'linear',
-    #     num_points: int = 100,
-    #     joint_format: str = 'rad',
-    #     visualize: bool = False,
-    # ) -> bool:
-    #     arm = arm or self.default_arm
-    #     _validate_joint_list(q_end, expected_len=7)
-    #     if joint_format == 'deg':
-    #         q_end = [a * np.pi / 180.0 for a in q_end]
-    #     q_start = self.get_joints(arm=arm)
-    #     if not q_start:
-    #         logger.error("无法获取当前关节角度")
-    #         return False
-    #     if HAVE_ROBOCORE and method in {'linear', 'cubic', 'quintic'}:
-    #         if method == 'linear':
-    #             _, q_traj, _, _ = linear_joint_trajectory(np.array(q_start), np.array(q_end), duration, num_points)
-    #         elif method == 'cubic':
-    #             _, q_traj, _, _ = cubic_polynomial_trajectory(np.array(q_start), np.array(q_end), duration, num_points)
-    #         else:
-    #             _, q_traj, _, _ = quintic_polynomial_trajectory(np.array(q_start), np.array(q_end), duration, num_points)
-    #         delay = duration / num_points
-    #         for q in q_traj.tolist():
-    #             if not self.servo_driver.set_joint_angles(q, arm=arm, wait_for_completion=False):
-    #                 return False
-    #             time.sleep(delay)
-    #         return True
-    #     # 退化：简单线性插值
-    #     steps, delay = _compute_steps_and_delay(speed_factor=duration / 2.0, T_default=duration, n_steps_ref=num_points)
-    #     for s in range(1, steps + 1):
-    #         r = s / steps
-    #         q = [a + (b - a) * r for a, b in zip(q_start, q_end)]
-    #         if not self.servo_driver.set_joint_angles(q, arm=arm, wait_for_completion=False):
-    #             return False
-    #         time.sleep(delay)
-    #     return True
+    # ==================== 笛卡尔控制接口（可用 RoboCore 时增强） ====================
+    def move_joint_trajectory(
+        self,
+        q_end: List[float],
+        arm: Optional[str] = None,
+        duration: float = 2.0,
+        method: str = 'cubic',
+        num_points: int = 100,
+        joint_format: str = 'rad',
+        visualize: bool = False,
+    ) -> bool:
+        """关节空间轨迹到达 q_end。
+        - 支持 'linear'/'cubic'/'quintic'（有 RoboCore 时）
+        - 无 RoboCore 时退化为线性插值
+        q_end: 单臂7关节（单位按 joint_format）
+        """
+        arm = arm or self.default_arm
+        if joint_format == 'deg':
+            q_end = [a * np.pi / 180.0 for a in q_end]
+        q_start = self.get_joints(arm=arm)
+        if not q_start or not isinstance(q_start, list):
+            logger.error("无法获取当前关节角度")
+            return False
+        try:
+            import numpy as _np
+            from robocore.planning.trajectory import (
+                linear_joint_trajectory as _linear_joint_trajectory,
+                cubic_polynomial_trajectory as _cubic_polynomial_trajectory,
+                quintic_polynomial_trajectory as _quintic_polynomial_trajectory,
+            )
+            q_start_np = _np.array(q_start)
+            q_end_np = _np.array(q_end)
+            if method == 'linear':
+                _, q_traj, _, _ = _linear_joint_trajectory(q_start_np, q_end_np, duration, num_points)
+            elif method == 'cubic':
+                _, q_traj, _, _ = _cubic_polynomial_trajectory(q_start_np, q_end_np, duration, num_points)
+            elif method == 'quintic':
+                _, q_traj, _, _ = _quintic_polynomial_trajectory(q_start_np, q_end_np, duration, num_points)
+            else:
+                logger.error(f"不支持的插值方法: {method}")
+                return False
+            delay = duration / num_points
+            for q in q_traj.tolist():
+                if not self.servo_driver.set_joint_angles(q, arm=arm, wait_for_completion=False):
+                    return False
+                time.sleep(delay)
+            return True
+        except Exception:
+            # 退化：简单线性插值
+            steps = max(2, int(num_points))
+            delay = duration / steps
+            for s in range(1, steps + 1):
+                r = s / steps
+                q = [a + (b - a) * r for a, b in zip(q_start, q_end)]
+                if not self.servo_driver.set_joint_angles(q, arm=arm, wait_for_completion=False):
+                    return False
+                time.sleep(delay)
+            return True
 
-    # def move_cartesian_linear(
-    #     self,
-    #     target_pose: List[float],
-    #     arm: Optional[str] = None,
-    #     duration: float = 2.0,
-    #     num_points: int = 50,
-    #     ik_method: str = 'dls',
-    #     visualize: bool = False,
-    # ) -> bool:
-    #     if not HAVE_ROBOCORE or self.robot_model is None:
-    #         logger.error("未安装 RoboCore 或未提供 robot_model，无法执行笛卡尔轨迹")
-    #         return False
-    #     arm = arm or self.default_arm
-    #     current_pose = self.get_pose(arm=arm)
-    #     if current_pose is None:
-    #         logger.error("无法获取当前位姿")
-    #         return False
-    #     pose_start = current_pose['transform']
-    #     position = np.array(target_pose[:3])
-    #     quaternion = np.array(target_pose[3:])
-    #     rotation = quaternion_to_matrix(quaternion)
-    #     pose_end = make_transform(rotation, position)
-    #     q_init = self.get_joints(arm=arm)
-    #     try:
-    #         _, _, q_traj = linear_cartesian_trajectory(
-    #             self.robot_model,
-    #             pose_start,
-    #             pose_end,
-    #             duration,
-    #             num_points=num_points,
-    #             q_init=np.array(q_init),
-    #             ik_backend='numpy',
-    #             ik_method=ik_method,
-    #             max_iters=100,
-    #             pos_tol=1e-3,
-    #             ori_tol=1e-3,
-    #         )
-    #     except Exception as e:
-    #         logger.error(f"轨迹规划失败: {e}")
-    #         return False
-    #     delay = duration / num_points
-    #     for q in q_traj.tolist():
-    #         if not self.servo_driver.set_joint_angles(q, arm=arm, wait_for_completion=False):
-    #             return False
-    #         time.sleep(delay)
-    #     return True
+    def move_cartesian_linear(
+        self,
+        target_pose: List[float],
+        arm: Optional[str] = None,
+        duration: float = 2.0,
+        num_points: int = 50,
+        ik_method: str = 'dls',
+        visualize: bool = False,
+    ) -> bool:
+        """笛卡尔直线轨迹到达目标位姿 target_pose=[x,y,z,qx,qy,qz,qw]。
+        需要 robot_model 和 RoboCore；否则返回失败。
+        """
+        if self.robot_model is None:
+            logger.error("未提供 robot_model，无法执行笛卡尔轨迹")
+            return False
+        arm = arm or self.default_arm
+        current_pose = self.get_pose(arm=arm)
+        if current_pose is None:
+            logger.error("无法获取当前位姿")
+            return False
+        pose_start = current_pose['transform']
+        try:
+            import numpy as _np
+            from robocore.transform import quaternion_to_matrix as _quat_to_mat, make_transform as _make_tf
+            from robocore.planning.trajectory import linear_cartesian_trajectory as _linear_cartesian_trajectory
+        except Exception as e:
+            logger.error(f"未安装 RoboCore 或导入失败: {e}")
+            return False
+        position = _np.array(target_pose[:3])
+        quaternion = _np.array(target_pose[3:])
+        rotation = _quat_to_mat(quaternion)
+        pose_end = _make_tf(rotation, position)
+        q_init = self.get_joints(arm=arm)
+        if not q_init or not isinstance(q_init, list):
+            logger.error("无法获取当前关节角度作为IK初值")
+            return False
+        try:
+            _, _, q_traj = _linear_cartesian_trajectory(
+                self.robot_model,
+                pose_start,
+                pose_end,
+                duration,
+                num_points=num_points,
+                q_init=_np.array(q_init),
+                ik_backend='numpy',
+                ik_method=ik_method,
+                max_iters=200,
+                pos_tol=1e-3,
+                ori_tol=1e-3,
+            )
+        except Exception as e:
+            logger.error(f"轨迹规划失败: {e}")
+            return False
+        delay = duration / num_points
+        for q in q_traj.tolist():
+            if not self.servo_driver.set_joint_angles(q, arm=arm, wait_for_completion=False):
+                return False
+            time.sleep(delay)
+        return True
 
     # ==================== 辅助方法 ====================
 
