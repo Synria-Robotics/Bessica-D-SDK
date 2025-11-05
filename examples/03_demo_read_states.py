@@ -14,6 +14,7 @@ Features:
 from bessica_d_sdk.api import SynriaBessicaRobotAPI
 import logging
 from bessica_d_sdk.hardware import ServoDriver
+import time
 logger = logging.getLogger("demo_read_states")
 
 def main(args):
@@ -26,14 +27,15 @@ def main(args):
     robot = SynriaBessicaRobotAPI(ServoDriver(port=args.port, baudrate=args.baudrate, debug_mode=False))
 
     try:
-        # Connect to robot
+            # Connect to robot
         if not robot.connect():
             print("✗ Connection failed, please check serial port settings")
             return
         joint_angles = robot.get_joints(arm=args.arm)
         logger.info(f"关节角度: {joint_angles}")
-        pose = robot.get_pose(arm=args.arm)
-        logger.info(f"末端执行器位姿: {pose}")
+        time.sleep(0.3)
+        # pose = robot.get_pose(arm=args.arm)
+        # logger.info(f"末端执行器位姿: {pose}")
         gripper = robot.get_gripper(arm=args.arm)
         logger.info(f"夹爪状态: {gripper}")
         

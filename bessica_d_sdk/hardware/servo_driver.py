@@ -243,29 +243,41 @@ class ServoDriver:
         self._thread_running = False
         logger.info("状态更新线程结束")
 
-    def read_joint_angles(self, arm: str = 'both') -> Optional[Union[List[float], List[List[float]]]]:
-        """
-        读取机械臂的关节角度（单位：弧度）
+    # def read_joint_angles(self, arm: str = 'both') -> Optional[Union[List[float], List[List[float]]]]:
+    #     """
+    #     读取机械臂的关节角度（单位：弧度）
 
-        Args:
-            arm (str, optional): 指定读取的机械臂名称，可选值为 "left_arm" 或 "right_arm"。
-                                如果未指定（默认为 None），则同时返回左右两个机械臂的角度。
+    #     Args:
+    #         arm (str, optional): 指定读取的机械臂名称，可选值为 "left_arm" 或 "right_arm"。
+    #                             如果未指定（默认为 None），则同时返回左右两个机械臂的角度。
 
-        Returns:
-            Optional[Union[List[float], List[List[float]]]]:
-                - 若指定 arm，则返回一个长度为 7 的一维列表：shape = (7,)
-                - 若 arm 为 both，则返回一个包含两个一维列表的二维列表：shape = (2, 7)，
-                结构为 [left_arm_angles, right_arm_angles]
-                - 若读取失败，则返回 None。
-        """
-        joint_states = self.data_parser.get_joint_state()
+    #     Returns:
+    #         Optional[Union[List[float], List[List[float]]]]:
+    #             - 若指定 arm，则返回一个长度为 7 的一维列表：shape = (7,)
+    #             - 若 arm 为 both，则返回一个包含两个一维列表的二维列表：shape = (2, 7)，
+    #             结构为 [left_arm_angles, right_arm_angles]
+    #             - 若读取失败，则返回 None。
+    #     """
+    #     joint_states = self.data_parser.get_joint_state()
 
-        if arm == 'both':
-            # 确保返回顺序固定 [left, right]
-            return [joint_states['left_arm'].angles,
-                    joint_states['right_arm'].angles]
-        else:
-            return joint_states[arm].angles
+    #     if arm == 'both':
+    #         # 确保返回顺序固定 [left, right]
+    #         return [joint_states['left_arm'].angles,
+    #                 joint_states['right_arm'].angles]
+    #     else:
+    #         return joint_states[arm].angles
+
+    #     def set_joint_angles_dual_arm(self, left_angles: List[float], right_angles: List[float]) -> bool:
+    #         """
+    #         设置双臂关节角度
+    #         """
+    #         return self.set_joint_angles(left_angles, arm="left_arm") and self.set_joint_angles(right_angles, arm="right_arm")
+    #     def set_joint_angles_single_arm(self, angles: List[float], arm: str) -> bool:
+    #         """
+    #         设置单臂关节角度
+    #         """
+    #         return self.set_joint_angles(angles, arm=arm)
+
 
     def set_block_order(self, order: Tuple[str, str]):
         """设置底层解析器双臂数据块顺序。
@@ -313,20 +325,27 @@ class ServoDriver:
     
     def read_joint_state(self, arm: str = 'both') -> Optional[Union[JointState, JointStateDict]]:
         """
-        读取机械臂的完整状态信息（关节角度、夹爪、按钮等）。
-
-        Args:
-            arm (str, optional): 指定要读取的机械臂。可选值为 "left_arm" 或 "right_arm"。
-                                若为 both，则返回左右两个机械臂的完整状态字典。
+        读取机械臂的suoyo信息。
 
         Returns:
             Optional[Union[JointState, JointStateDict]]:
-                - 如果指定 arm，则返回对应机械臂的 JointState。
-                - 如果 arm 为 both，则返回包含左右机械臂的 JointStateDict：
-                {"left_arm": JointState, "right_arm": JointState}
-                - 若状态尚未可用，则返回 None。
+                - 若指定 arm，则返回一个 JointState 对象。
+                - 若未指定 arm，则返回一个包含两个 JointState 对象的元组：shape = (2, 7)，
+                结构为 [left_arm_joint_state, right_arm_joint_state]
+                - 若读取失败，则返回 None。
         """
         return self.data_parser.get_joint_state(arm)
+
+    def read_joint_angles(self,arm: str = '') -> Optional[Union[JointState, JointStateDict]]:
+        """
+        """
+        if arm in ["left_arm", "right_arm"]:
+            return self.data_parser.get_joint_state(arm).angles
+        if arm == "both":
+            return [self.data_parser.get_joint_state(arm="left_arm").angles,
+                    self.data_parser.get_joint_state(arm="right_arm").angles]
+        return None
+
 
     def set_joint_angles(self,
                         joint_angles: List[float],
@@ -364,13 +383,14 @@ class ServoDriver:
             mapped_angles = [angle * self.direction_map[arm][i] for i, angle in enumerate(joint_angles)]
 
             frame = self._build_joint_frame(mapped_angles, arm=arm)
+            print(f"set_joint_angles: arm={arm}, frame={frame}")
             result = self.serial_comm.send_data(frame)
 
-            if gripper_angle is not None:
-                result &= self.set_gripper(gripper_angle, arm=arm)
+            # if gripper_angle is not None:
+            #     result &= self.set_gripper(gripper_angle, arm=arm)
 
             if wait_for_completion and result:
-                logger.info(f"等待 {arm} 到达目标位置")
+                logger.info(f"等待目标位置")
                 start_time = time.time()
                 while time.time() - start_time < timeout:
                     angles_now = self.data_parser.get_joint_state(arm).angles
@@ -379,7 +399,7 @@ class ServoDriver:
                     time.sleep(0.01)
 
                 if time.time() - start_time >= timeout:
-                    logger.warning(f"{arm} 等待到位超时")
+                    logger.warning(f"等待目标位置超时")
                     return False
 
             return result
@@ -819,3 +839,110 @@ class ServoDriver:
         return frame
 
 
+
+    # ======================== 高层度制 API 与插值（吸收 utils/control.py） ========================
+    @staticmethod
+
+    def move_joint_deg(self, arm: str, joint_id: int, angle_deg: float) -> bool:
+        """控制单臂单关节到指定角度（度制）。joint_id: 0~6。"""
+        if arm not in ["left_arm", "right_arm"]:
+            logger.error(f"move_joint_deg: arm 参数无效: {arm}")
+            return False
+        if not (0 <= joint_id <= 6):
+            logger.error(f"move_joint_deg: joint_id 超界: {joint_id}")
+            return False
+        state = self.read_joint_state(arm)
+        if not state:
+            logger.error(f"move_joint_deg: 读取 {arm} 状态失败")
+            return False
+        current = list(state.angles)
+        target = current[:]
+        target[joint_id] = angle_deg * self.DEG_TO_RAD
+
+    def move_joints_deg(self, arm: str, angles_deg: List[float]) -> bool:
+        """控制单臂7关节到指定角度（度制）。"""
+        if arm not in ["left_arm", "right_arm"]:
+            logger.error(f"move_joints_deg: arm 参数无效: {arm}")
+            return False
+        if not isinstance(angles_deg, list) or len(angles_deg) != 7:
+            logger.error("move_joints_deg: 必须提供7个关节角度(度)")
+            return False
+        current = self.read_joint_state(arm)
+        if not current or len(current) != 7:
+            logger.warning(f"move_joints_deg: 当前未获取到 {arm} 有效角度，直接发送目标")
+            target = [a * self.DEG_TO_RAD for a in angles_deg]
+            return self.set_joint_angles(joint_angles=target, arm=arm, wait_for_completion=True)
+        target = [a * self.DEG_TO_RAD for a in angles_deg]
+
+
+    def move_dual_joints_deg(self,
+                             left_angles_deg: List[float],
+                             right_angles_deg: List[float],
+                             ) -> bool:
+        """控制双臂14关节到指定角度（度制）。"""
+        if not (isinstance(left_angles_deg, list) and len(left_angles_deg) == 7 and isinstance(right_angles_deg, list) and len(right_angles_deg) == 7):
+            logger.error("move_dual_joints_deg: 左右臂都必须提供7个角度(度)")
+            return False
+        # current = self.read_joint_state(arm="both")
+        target_left = [a * self.DEG_TO_RAD for a in left_angles_deg]
+        target_right = [a * self.DEG_TO_RAD for a in right_angles_deg]
+
+        success = self.set_joint_angles(joint_angles=target_left, arm="left_arm", wait_for_completion=False)
+        success &= self.set_joint_angles(joint_angles=target_right, arm="right_arm", wait_for_completion=True)
+        return success
+
+
+    def set_gripper_deg(self, arm: str, angle_deg: float, wait: bool = True) -> bool:
+        """设置夹爪角度（度制）。"""
+        if arm not in ["left_arm", "right_arm"]:
+            logger.error(f"set_gripper_deg: arm 参数无效: {arm}")
+            return False
+        angle_rad = angle_deg * self.DEG_TO_RAD
+        return self.set_gripper(angle_rad, arm=arm, wait_for_completion=wait)
+
+    def open_gripper_deg(self, angle_deg: float = 100.0, arm: str = "both", wait: bool = True) -> bool:
+        """打开夹爪（度制，默认100°）。支持 both/单臂。"""
+        if arm == "both":
+            left_ok = self.set_gripper_deg("left_arm", angle_deg, wait)
+            right_ok = self.set_gripper_deg("right_arm", angle_deg, wait)
+            return left_ok and right_ok
+        else:
+            return self.set_gripper_deg(arm, angle_deg, wait)
+
+    def close_gripper_deg(self, arm: str = None, wait: bool = True) -> bool:
+        """关闭夹爪（度制，设置为0°）。支持 both/单臂。"""
+        if arm in (None, "both"):
+            return self.open_gripper_deg(angle_deg=0.0, arm="both", wait=wait)
+        else:
+            return self.set_gripper_deg(arm, 0.0, wait)
+
+    def print_joint_angles_deg(self, arm: str = "both", read_gripper: bool = True):
+        """打印当前关节角度（度）。"""
+        joint_angles = self.read_joint_state(arm)
+        if arm == "both":
+            left_deg = [round(a * self.RAD_TO_DEG, 2) for a in joint_angles[0]]
+            right_deg = [round(a * self.RAD_TO_DEG, 2) for a in joint_angles[1]]
+            print(f"左臂关节角度: {left_deg}")
+            print(f"右臂关节角度: {right_deg}")
+            if read_gripper:
+                self.print_gripper_angles_deg(arm)
+        else:
+            angles_deg = [round(a * self.RAD_TO_DEG, 2) for a in joint_angles]
+            print(f"{arm} 关节角度: {angles_deg}")
+            if read_gripper:
+                self.print_gripper_angles_deg(arm)
+
+    def print_gripper_angles_deg(self, arm: str = "both"):
+        """打印当前夹爪角度（度, 0~100）。"""
+        gripper_angles = self.read_gripper_data(arm)
+        if arm == "both":
+            left_deg = round(gripper_angles[0] * self.RAD_TO_DEG, 2)
+            right_deg = round(gripper_angles[1] * self.RAD_TO_DEG, 2)
+            print(f"左夹爪角度: {left_deg}")
+            print(f"右夹爪角度: {right_deg}")
+        else:
+            angle_deg = round(gripper_angles * self.RAD_TO_DEG, 2)
+            if arm == 'left_arm':
+                print(f"左夹爪角度: {angle_deg}")
+            else:
+                print(f"右夹爪角度: {angle_deg}")

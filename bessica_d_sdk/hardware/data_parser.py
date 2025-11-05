@@ -117,7 +117,7 @@ class DataParser:
                 logger.debug(f"未处理的指令ID: 0x{cmd_id:02X}")
             return None
     
-    def get_joint_state(self, arm: str = 'both'):
+    def get_joint_state(self, arm: str = ''):
         with self._lock:
             for a in ['left_arm','right_arm']:
                 js = self._joint_states[a]

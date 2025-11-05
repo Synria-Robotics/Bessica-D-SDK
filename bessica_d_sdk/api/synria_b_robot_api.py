@@ -20,21 +20,20 @@ import json
 import os
 import logging
 # Import from robocore for kinematics and planning
-from robocore.kinematics import inverse_kinematics
-from robocore.modeling import RobotModel
-from robocore.transform import make_transform, quaternion_to_matrix
-from robocore.kinematics import forward_kinematics
-from robocore.transform import matrix_to_euler, matrix_to_quaternion
-from robocore.planning.trajectory import (
-    cubic_polynomial_trajectory,
-    quintic_polynomial_trajectory,
-    linear_joint_trajectory,
-    linear_cartesian_trajectory,
-    circular_cartesian_trajectory,
-    cartesian_waypoint_trajectory
-)
+# from robocore.kinematics import inverse_kinematics
+# from robocore.modeling import RobotModel
+# from robocore.transform import make_transform, quaternion_to_matrix
+# from robocore.kinematics import forward_kinematics
+# from robocore.transform import matrix_to_euler, matrix_to_quaternion
+# from robocore.planning.trajectory import (
+#     cubic_polynomial_trajectory,
+#     quintic_polynomial_trajectory,
+#     linear_joint_trajectory,
+#     linear_cartesian_trajectory,
+#     circular_cartesian_trajectory,
+#     cartesian_waypoint_trajectory
+# )
 from ..hardware import ServoDriver
-from ..utils.control import move_joints_dual_arm, set_dual_gripper, control_move, move_joints, set_gripper_angle, open_gripper, close_gripper
 # from ..execution import HardwareExecutor, JointPlanner
 # from ..utils.logger import logger
 logger = logging.getLogger("SynriaBessicaRobotAPI")
@@ -59,17 +58,18 @@ class SynriaBessicaRobotAPI:
         """
         self.servo_driver = servo_driver
         # 在 API 内部创建 RobotModel 实例
-        try:
-            from synriard import get_model_path
-            urdf_path = get_model_path("Bessica_D", version=robot_version, variant="covered")
-            self.robot_model = RobotModel(str(urdf_path))
-        except Exception as e:
-            # 本地兜底（按你项目里已有的 Alicia fallback 模式）
-            from pathlib import Path
-            default_urdf = Path(__file__).parent.parent / "assets" / "robot" / "urdf" / f"Alicia-D_{robot_version}" / "alicia_duo_with_gripper.urdf"
-            if default_urdf.exists():
-                self.robot_model = RobotModel(str(default_urdf), end_link='tool0')
-            raise RuntimeError(f"无法创建 RobotModel，请检查 synriard 或本地 URDF。错误: {e}")
+        # try:
+        #     from synriard import get_model_path
+        #     urdf_path = get_model_path("Bessica_D", version=robot_version, variant="Covered")
+        #     self.robot_model = RobotModel(str(urdf_path))
+        # except Exception as e:
+        #     # 本地兜底（按你项目里已有的 Alicia fallback 模式）
+        #     from pathlib import Path
+        #     # 自行根据本地路径来更改并找到bessicia的urdf文件
+        #     default_urdf = Path(__file__).parent.parent / "assets" / "robot" / "urdf" / f"Alicia-D_{robot_version}" / "alicia_duo_with_gripper.urdf"
+        #     if default_urdf.exists():
+        #         self.robot_model = RobotModel(str(default_urdf), end_link='tool0')
+        #     raise RuntimeError(f"无法创建 RobotModel，请检查 synriard 或本地 URDF。错误: {e}")
         # self.robot_model = robot_model
         # self.firmware_version = firmware_version
         self.firmware_new = False
@@ -92,16 +92,28 @@ class SynriaBessicaRobotAPI:
         self.servo_driver.disconnect()
 
     # ==================== 关节控制 ====================
-    def set_home(self, arm: str = "both", speed_factor: float = 1.0) -> bool:
+    def set_home(self, arm: str = "", speed_factor: float = 1.0) -> bool:
         """回到零位。单臂传 7 关节 0；双臂依次/插值到 0。"""
+        arm = arm or self.default_arm
+        print(f"set_home at head: arm={arm}")
+        home_angles = [0.0] * 7
         if arm == "both":
-            move_joints_dual_arm(self.servo_driver, self.home_angles, self.home_angles)
-            open_gripper(self.servo_driver, 0.0, arm="both")
+            # ok = self.servo_driver.move_dual_joints_deg(self.home_angles, self.home_angles, interpolate=True)
+            success = self.set_joint_target(target_joints=[home_angles,home_angles], arm="both")
+            success &= self.servo_driver.open_gripper_deg(angle_deg=99.9, arm="both", wait=True)
+            return success
+        elif arm in ("left_arm", "right_arm"):
+            print(f"set_home: arm={arm}")
+            ok = self.set_joint_target(target_joints=home_angles, arm=arm)
+            ok &= self.servo_driver.open_gripper_deg(angle_deg=99.9, arm=arm, wait=True)
+            return ok
+        else:
+            logger.error(f"set_home: 非法 arm={arm}")
+            return False
 
     def set_joint_target(
         self,
-        target_joints: List[float],
-        target_joints_second: Optional[List[float]] = None,
+        target_joints: Union[List[float], List[List[float]]],
         arm: Optional[str] = None,
         joint_format: str = "deg",
         wait: bool = True,
@@ -109,17 +121,23 @@ class SynriaBessicaRobotAPI:
     ) -> bool:
         """将单臂移动到目标关节角,或让双臂镜像移动关节角"""
         arm = arm or self.default_arm
-        if arm == "both":
-            move_joints_dual_arm(self.servo_driver, target_joints, target_joints_second)
-        elif arm == "left_arm":
-            move_joints(self.servo_driver, target_joints, arm="right_arm")
-        elif arm == "right_arm":
-            move_joints(self.servo_driver, target_joints, arm="left_arm")
-        else:
-            logger.error(f"请输入指定要控制的机械臂，当前指定机械臂为{arm}")
+        if joint_format.lower() not in ("deg", "degree", "degrees"):
+            logger.error("set_joint_target 目前仅支持 joint_format='deg'")
             return False
-        # control_move(self.servo_driver, target_joints, arm=arm)
-        # return True
+        if arm == "both":
+            # shape the target_joints to a list of two lists
+            target_joints_left = target_joints[0]
+            target_joints_right = target_joints[1]
+            return self.servo_driver.move_dual_joints_deg(left_angles_deg=target_joints_left, right_angles_deg=target_joints_right)
+        elif arm in ("left_arm"):
+            print(f"set_joint_target: arm={arm}, target_joints={target_joints}")
+            return self.servo_driver.move_joints_deg(arm="right_arm", angles_deg=target_joints)
+        elif arm in ("right_arm"):
+            print(f"set_joint_target: arm={arm}, target_joints={target_joints}")
+            return self.servo_driver.move_joints_deg(arm="left_arm", angles_deg=target_joints)
+        else:
+            logger.error(f"set_joint_target: 非法 arm={arm}")
+            return False
 
     def set_pose_target(self,
                         target_pose: List[float],
@@ -351,22 +369,22 @@ class SynriaBessicaRobotAPI:
             return False
         if command is not None:
             if command == 'open':
-                value = 0.1
+                value = 100.0
             elif command == 'close':
-                value = 99.9
+                value = 0.0
             else:
                 logger.error("command 仅支持 'open'/'close'")
                 return False
-        # value 单位: 度 -> 弧度
-        # angle_rad = float(value) * np.pi / 180.0
-        if arm == "left_arm" or arm == "right_arm":
-            set_gripper_angle(self.servo_driver, value, arm=arm, wait=wait_for_completion)
-        elif arm == "both":
-            set_dual_gripper(self.servo_driver, value, value, wait=wait_for_completion)  # wait=wait_for_completion)
-        else:
-            logger.error(f"请输入指定要控制的机械臂，当前指定机械臂为{arm}")
+        if value is None:
+            logger.error("必须提供 command 或 value 之一")
             return False
-        return True
+        if arm in ("left_arm", "right_arm"):
+            return self.servo_driver.set_gripper_deg(arm=arm, angle_deg=float(value), wait=wait_for_completion)
+        elif arm == "both":
+            return self.servo_driver.open_gripper_deg(angle_deg=float(value), arm="both", wait=wait_for_completion)
+        else:
+            logger.error(f"set_gripper_target: 非法 arm={arm}")
+            return False
 
     # ==================== 位姿与状态 ====================
     def get_joints(self, arm: Optional[str] = None) -> Optional[Union[List[float], List[List[float]]]]:
