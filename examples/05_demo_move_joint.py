@@ -29,7 +29,7 @@ def main(args):
         if not robot.connect():
             print("✗ Connection failed, please check serial port settings")
             return
-
+        robot.set_speed(speed_deg_s=20.0)
         left_angles = [30, 35, 58, -45, -40, -35, 0]
         right_angles = [30, 35, 58, -45, -40, -35, 0]
         both_angles = [15, 25, 25, 15, 50, 25, 0]

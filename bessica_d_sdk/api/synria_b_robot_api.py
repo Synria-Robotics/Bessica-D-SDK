@@ -484,6 +484,13 @@ class SynriaBessicaRobotAPI:
     #     return None
 
     # ==================== 系统控制 ====================
+    def set_speed(self, speed_deg_s: float) -> bool:
+        """设置运动速度（度/秒）。"""
+        return self.servo_driver.set_speed_deg_s(speed_deg_s)
+
+    # def set_speed_factor(self, speed_factor: float) -> bool:
+    #     """按系数设置速度：factor=1.0 → 原始值约 1000。"""
+    #     return self.servo_driver.set_speed_factor(speed_factor)
     def torque_control(self, command: str, arm: str = 'both') -> bool:
         if command == 'on':
             return self.servo_driver.enable_torque(arm)

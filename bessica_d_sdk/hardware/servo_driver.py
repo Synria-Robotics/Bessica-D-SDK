@@ -841,6 +841,51 @@ class ServoDriver:
 
 
     # ======================== 高层度制 API 与插值（吸收 utils/control.py） ========================
+    def _build_speed_frame(self, speed_value: int) -> List[int]:
+        """构建速度设置帧。
+        帧格式: AA 06 03 04 [SPEED_L] [SPEED_H] CHECK FF
+        - 指令: 0x06（沿用 CMD_DUAL_ARM 常量值）
+        - 长度: 0x03 (识别 1B + 速度 2B)
+        - 识别: 0x04
+        - 速度: 0~3400, 小端
+        - 校验: 从第3字节到倒数第3字节求和 % 2
+        """
+        speed = max(0, min(3400, int(speed_value)))
+        frame = [0] * (3 + 5)  # 数据长度3 + 固定5字节（头、指令、长度、...、校验、尾）
+        frame[0] = self.FRAME_HEADER
+        frame[1] = self.CMD_DUAL_ARM  # 0x06
+        frame[2] = 0x03
+        frame[3] = 0x04
+        frame[4] = speed & 0xFF
+        frame[5] = (speed >> 8) & 0xFF
+        frame[-1] = self.FRAME_FOOTER
+        frame[-2] = self._calculate_checksum(frame)
+        return frame
+
+    def set_speed_raw(self, speed_value: int) -> bool:
+        """设置速度原始值(0~3400)。"""
+        frame = self._build_speed_frame(speed_value)
+        return self.serial_comm.send_data(frame)
+
+    def set_speed_deg_s(self, speed_deg_s: float) -> bool:
+        """按度/秒设置速度：先转 rad/s，再按 (rad_s / 2π) * 3400 映射为原始值。"""
+        try:
+            deg_s = float(speed_deg_s)
+        except Exception:
+            return False
+        rad_s = deg_s * self.DEG_TO_RAD
+        max_angle_rad_per_sec = math.pi * 2.0
+        raw = int(max(1, min(3400, (rad_s / max_angle_rad_per_sec) * 3400.0)))
+        return self.set_speed_raw(raw)
+
+    def set_speed_factor(self, speed_factor: float) -> bool:
+        """按系数设置速度，对齐 Alicia：factor∈[0,1] → raw = clip(factor * 3400)。"""
+        try:
+            f = float(speed_factor)
+        except Exception:
+            return False
+        raw = int(max(0.0, min(3400.0, f * 3400.0)))
+        return self.set_speed_raw(raw)
     @staticmethod
 
     def move_joint_deg(self, arm: str, joint_id: int, angle_deg: float) -> bool:
