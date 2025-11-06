@@ -10,11 +10,9 @@ Features:
 - Adjustable motion speed
 """
 
-from bessica_d_sdk.api import SynriaBessicaRobotAPI
-import logging
+import bessica_d_sdk
+from bessica_d_sdk.utils.logger import logger
 import time
-from bessica_d_sdk.hardware import ServoDriver
-logger = logging.getLogger("demo_move_joint")
 
 def main(args):
     """Control robot joint movements.
@@ -22,14 +20,19 @@ def main(args):
     :param args: Command line arguments
     """
     # Initialize robot instance
-    robot = SynriaBessicaRobotAPI(ServoDriver(port=args.port, baudrate=args.baudrate, debug_mode=False))   
+    robot = bessica_d_sdk.create_robot(
+        port=args.port,
+        baudrate=args.baudrate,
+        robot_version=args.robot_version,
+        debug_mode=False,
+        speed_deg_s=args.speed_deg_s
+    )   
 
     try:
         # Connect to robot
         if not robot.connect():
             print("✗ Connection failed, please check serial port settings")
             return
-        robot.set_speed(speed_deg_s=20.0)
         left_angles = [30, 35, 58, -45, -40, -35, 0]
         right_angles = [30, 35, 58, -45, -40, -35, 0]
         both_angles = [15, 25, 25, 15, 50, 25, 0]
@@ -56,6 +59,8 @@ if __name__ == '__main__':
     # Robot configuration
     parser.add_argument('--port', type=str, default="COM1", help="串口端口 (例如: /dev/ttyUSB0 或 COM3)")
     parser.add_argument('--baudrate', type=int, default=1000000,  help="波特率 (默认: 1000000)")
+    parser.add_argument('--robot_version', type=str, default="v1_0",  help="机械臂版本 (默认: v1_0)")
     parser.add_argument('--arm', type=str, default="both", choices=["left_arm", "right_arm", "both"], help="机械臂 (默认: both)")
+    parser.add_argument('--speed_deg_s', type=float, default=20.0,  help="运动速度 (度/秒, 默认: 20.0)")
     args = parser.parse_args()
     main(args)

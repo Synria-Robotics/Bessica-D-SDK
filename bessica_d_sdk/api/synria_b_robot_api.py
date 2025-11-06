@@ -71,7 +71,6 @@ class SynriaBessicaRobotAPI:
             raise RuntimeError(f"无法创建 RobotModel，请检查 synriard 或本地 URDF。错误: {e}")
         # self.robot_model = robot_model
         # self.firmware_version = firmware_version
-        self.firmware_new = False
         self.speed_deg_s = speed_deg_s
         # self.hardware_executor = HardwareExecutor(servo_driver)
         # self.joint_planner = JointPlanner()
@@ -94,7 +93,7 @@ class SynriaBessicaRobotAPI:
     def set_home(self, arm: str = "", speed_factor: float = 1.0) -> bool:
         """回到零位。单臂传 7 关节 0；双臂依次/插值到 0。"""
         arm = arm or self.default_arm
-        print(f"set_home at head: arm={arm}")
+        logger.info(f"set_home at head: arm={arm}")
         home_angles = [0.0] * 7
         if arm == "both":
             # ok = self.servo_driver.move_dual_joints_deg(self.home_angles, self.home_angles, interpolate=True)
@@ -129,10 +128,10 @@ class SynriaBessicaRobotAPI:
             target_joints_right = target_joints[1]
             return self.servo_driver.move_dual_joints_deg(left_angles_deg=target_joints_left, right_angles_deg=target_joints_right)
         elif arm in ("left_arm"):
-            print(f"set_joint_target: arm={arm}, target_joints={target_joints}")
+            # logger.info(f"set_joint_target: arm={arm}, target_joints={target_joints}")
             return self.servo_driver.move_joints_deg(arm="right_arm", angles_deg=target_joints)
         elif arm in ("right_arm"):
-            print(f"set_joint_target: arm={arm}, target_joints={target_joints}")
+            # print(f"set_joint_target: arm={arm}, target_joints={target_joints}")
             return self.servo_driver.move_joints_deg(arm="left_arm", angles_deg=target_joints)
         else:
             logger.error(f"set_joint_target: 非法 arm={arm}")
@@ -513,7 +512,7 @@ class SynriaBessicaRobotAPI:
     # ==================== 笛卡尔控制接口（可用 RoboCore 时增强） ====================
     def move_joint_trajectory(
         self,
-        q_end: List[float],
+        q_end: Union[List[float], List[List[float]]],
         arm: Optional[str] = None,
         duration: float = 2.0,
         method: str = 'cubic',
@@ -522,74 +521,214 @@ class SynriaBessicaRobotAPI:
         visualize: bool = False,
     ) -> bool:
         """关节空间轨迹到达 q_end。
+        
         - 支持 'linear'/'cubic'/'quintic'（有 RoboCore 时）
         - 无 RoboCore 时退化为线性插值
-        q_end: 单臂7关节（单位按 joint_format）
+        
+        Args:
+            q_end: 
+                - 单臂模式（arm="left_arm" 或 "right_arm"）: 一维数组，7个关节角度
+                - 双臂模式（arm="both"）: 二维数组 [[left_7_joints], [right_7_joints]]
+            arm: "left_arm", "right_arm" 或 "both"（默认使用 self.default_arm）
+            duration: 轨迹持续时间（秒）
+            method: 插值方法 'linear'/'cubic'/'quintic'
+            num_points: 轨迹点数量
+            joint_format: 'rad' 或 'deg'
+            visualize: 是否可视化（暂未实现）
+        
+        Returns:
+            bool: 是否成功执行
         """
         arm = arm or self.default_arm
-        if joint_format == 'deg':
-            q_end = [a * np.pi / 180.0 for a in q_end]
-        q_start = self.get_joints(arm=arm)
-        if not q_start or not isinstance(q_start, list):
-            logger.error("无法获取当前关节角度")
-            return False
-        try:
-            import numpy as _np
-            from robocore.planning.trajectory import (
-                linear_joint_trajectory as _linear_joint_trajectory,
-                cubic_polynomial_trajectory as _cubic_polynomial_trajectory,
-                quintic_polynomial_trajectory as _quintic_polynomial_trajectory,
-            )
-            q_start_np = _np.array(q_start)
-            q_end_np = _np.array(q_end)
-            if method == 'linear':
-                _, q_traj, _, _ = _linear_joint_trajectory(q_start_np, q_end_np, duration, num_points)
-            elif method == 'cubic':
-                _, q_traj, _, _ = _cubic_polynomial_trajectory(q_start_np, q_end_np, duration, num_points)
-            elif method == 'quintic':
-                _, q_traj, _, _ = _quintic_polynomial_trajectory(q_start_np, q_end_np, duration, num_points)
-            else:
-                logger.error(f"不支持的插值方法: {method}")
+        
+        # 判断输入格式：一维数组还是二维数组
+        is_dual_arm_input = False
+        if isinstance(q_end, list) and len(q_end) > 0:
+            if isinstance(q_end[0], list):
+                is_dual_arm_input = True
+            elif arm == "both":
+                logger.error("arm='both' 时，q_end 必须是二维数组 [[left_7_joints], [right_7_joints]]")
                 return False
-            delay = duration / num_points
-            for q in q_traj.tolist():
-                if not self.servo_driver.set_joint_angles(q, arm=arm, wait_for_completion=False):
+        
+        # 处理单臂模式
+        if arm in ("left_arm", "right_arm"):
+            if is_dual_arm_input:
+                logger.warning(f"单臂模式但输入了二维数组，使用第一个元素")
+                q_end = q_end[0]
+            
+            # 转换为弧度
+            if joint_format == 'deg':
+                q_end = [a * np.pi / 180.0 for a in q_end]
+            
+            if len(q_end) != 7:
+                logger.error(f"单臂模式需要7个关节角度，但得到 {len(q_end)} 个")
+                return False
+            
+            q_start = self.get_joints(arm=arm)
+            if not q_start or not isinstance(q_start, list) or len(q_start) != 7:
+                logger.error("无法获取当前关节角度")
+                return False
+            
+            try:
+                import numpy as _np
+                from robocore.planning.trajectory import (
+                    linear_joint_trajectory as _linear_joint_trajectory,
+                    cubic_polynomial_trajectory as _cubic_polynomial_trajectory,
+                    quintic_polynomial_trajectory as _quintic_polynomial_trajectory,
+                )
+                q_start_np = _np.array(q_start)
+                q_end_np = _np.array(q_end)
+                if method == 'linear':
+                    _, q_traj, _, _ = _linear_joint_trajectory(q_start_np, q_end_np, duration, num_points)
+                elif method == 'cubic':
+                    _, q_traj, _, _ = _cubic_polynomial_trajectory(q_start_np, q_end_np, duration, num_points)
+                elif method == 'quintic':
+                    _, q_traj, _, _ = _quintic_polynomial_trajectory(q_start_np, q_end_np, duration, num_points)
+                else:
+                    logger.error(f"不支持的插值方法: {method}")
                     return False
-                time.sleep(delay)
-            return True
-        except Exception:
-            # 退化：简单线性插值
-            steps = max(2, int(num_points))
-            delay = duration / steps
-            for s in range(1, steps + 1):
-                r = s / steps
-                q = [a + (b - a) * r for a, b in zip(q_start, q_end)]
-                if not self.servo_driver.set_joint_angles(q, arm=arm, wait_for_completion=False):
+                delay = duration / num_points
+                for q in q_traj.tolist():
+                    if not self.servo_driver.set_joint_angles(q, arm=arm, wait_for_completion=False):
+                        return False
+                    time.sleep(delay)
+                return True
+            except Exception as e:
+                # 退化：简单线性插值
+                logger.warning(f"使用简单线性插值（RoboCore 不可用: {e}）")
+                steps = max(2, int(num_points))
+                delay = duration / steps
+                for s in range(1, steps + 1):
+                    r = s / steps
+                    q = [a + (b - a) * r for a, b in zip(q_start, q_end)]
+                    if not self.servo_driver.set_joint_angles(q, arm=arm, wait_for_completion=False):
+                        return False
+                    time.sleep(delay)
+                return True
+        
+        # 处理双臂模式
+        elif arm == "both":
+            if not is_dual_arm_input:
+                logger.error("arm='both' 时，q_end 必须是二维数组 [[left_7_joints], [right_7_joints]]")
+                return False
+            
+            if len(q_end) != 2 or len(q_end[0]) != 7 or len(q_end[1]) != 7:
+                logger.error("双臂模式需要 [[left_7_joints], [right_7_joints]] 格式")
+                return False
+            
+            q_end_left = q_end[0]
+            q_end_right = q_end[1]
+            
+            # 转换为弧度
+            if joint_format == 'deg':
+                q_end_left = [a * np.pi / 180.0 for a in q_end_left]
+                q_end_right = [a * np.pi / 180.0 for a in q_end_right]
+            
+            q_start = self.get_joints(arm="both")
+            if not q_start or not isinstance(q_start, list) or len(q_start) != 2:
+                logger.error("无法获取当前关节角度（双臂）")
+                return False
+            
+            q_start_left = q_start[0]
+            q_start_right = q_start[1]
+            
+            try:
+                import numpy as _np
+                from robocore.planning.trajectory import (
+                    linear_joint_trajectory as _linear_joint_trajectory,
+                    cubic_polynomial_trajectory as _cubic_polynomial_trajectory,
+                    quintic_polynomial_trajectory as _quintic_polynomial_trajectory,
+                )
+                
+                # 为左右臂分别生成轨迹
+                q_start_left_np = _np.array(q_start_left)
+                q_end_left_np = _np.array(q_end_left)
+                q_start_right_np = _np.array(q_start_right)
+                q_end_right_np = _np.array(q_end_right)
+                
+                if method == 'linear':
+                    _, q_traj_left, _, _ = _linear_joint_trajectory(q_start_left_np, q_end_left_np, duration, num_points)
+                    _, q_traj_right, _, _ = _linear_joint_trajectory(q_start_right_np, q_end_right_np, duration, num_points)
+                elif method == 'cubic':
+                    _, q_traj_left, _, _ = _cubic_polynomial_trajectory(q_start_left_np, q_end_left_np, duration, num_points)
+                    _, q_traj_right, _, _ = _cubic_polynomial_trajectory(q_start_right_np, q_end_right_np, duration, num_points)
+                elif method == 'quintic':
+                    _, q_traj_left, _, _ = _quintic_polynomial_trajectory(q_start_left_np, q_end_left_np, duration, num_points)
+                    _, q_traj_right, _, _ = _quintic_polynomial_trajectory(q_start_right_np, q_end_right_np, duration, num_points)
+                else:
+                    logger.error(f"不支持的插值方法: {method}")
                     return False
-                time.sleep(delay)
-            return True
+                
+                delay = duration / num_points
+                for q_left, q_right in zip(q_traj_left.tolist(), q_traj_right.tolist()):
+                    # 同时发送左右臂指令
+                    success_left = self.servo_driver.set_joint_angles(q_left, arm="left_arm", wait_for_completion=False)
+                    success_right = self.servo_driver.set_joint_angles(q_right, arm="right_arm", wait_for_completion=False)
+                    if not (success_left and success_right):
+                        return False
+                    time.sleep(delay)
+                return True
+            except Exception as e:
+                # 退化：简单线性插值
+                logger.warning(f"使用简单线性插值（RoboCore 不可用: {e}）")
+                steps = max(2, int(num_points))
+                delay = duration / steps
+                for s in range(1, steps + 1):
+                    r = s / steps
+                    q_left = [a + (b - a) * r for a, b in zip(q_start_left, q_end_left)]
+                    q_right = [a + (b - a) * r for a, b in zip(q_start_right, q_end_right)]
+                    success_left = self.servo_driver.set_joint_angles(q_left, arm="left_arm", wait_for_completion=False)
+                    success_right = self.servo_driver.set_joint_angles(q_right, arm="right_arm", wait_for_completion=False)
+                    if not (success_left and success_right):
+                        return False
+                    time.sleep(delay)
+                return True
+        else:
+            logger.error(f"非法的 arm 参数: {arm}")
+            return False
 
     def move_cartesian_linear(
         self,
-        target_pose: List[float],
+        target_pose: Union[List[float], List[List[float]]],
         arm: Optional[str] = None,
+        target_pose_second_arm: Optional[List[float]] = None,
         duration: float = 2.0,
         num_points: int = 50,
         ik_method: str = 'dls',
         visualize: bool = False,
     ) -> bool:
-        """笛卡尔直线轨迹到达目标位姿 target_pose=[x,y,z,qx,qy,qz,qw]。
+        """笛卡尔直线轨迹到达目标位姿。
+        
         需要 robot_model 和 RoboCore；否则返回失败。
+        
+        Args:
+            target_pose: 
+                - 单臂模式（arm="left_arm" 或 "right_arm"）: 一维数组 [x, y, z, qx, qy, qz, qw]
+                - 双臂模式（arm="both"）: 
+                    - 方式1: 二维数组 [[left_pose], [right_pose]]，每个pose为7个元素
+                    - 方式2: 一维数组作为左臂位姿，并提供 target_pose_second_arm 作为右臂位姿
+            arm: "left_arm", "right_arm" 或 "both"（默认使用 self.default_arm）
+            target_pose_second_arm: 双臂模式下的右臂目标位姿（可选，如果 target_pose 是二维数组则忽略）
+            duration: 轨迹持续时间（秒）
+            num_points: 轨迹点数量
+            ik_method: IK求解方法 'dls'/'pinv'/'transpose'
+            visualize: 是否可视化（暂未实现）
+        
+        Returns:
+            bool: 是否成功执行
         """
         if self.robot_model is None:
             logger.error("未提供 robot_model，无法执行笛卡尔轨迹")
             return False
+        
         arm = arm or self.default_arm
-        current_pose = self.get_pose(arm=arm)
-        if current_pose is None:
-            logger.error("无法获取当前位姿")
-            return False
-        pose_start = current_pose['transform']
+        
+        # 判断输入格式
+        is_dual_arm_input = False
+        if isinstance(target_pose, list) and len(target_pose) > 0:
+            if isinstance(target_pose[0], list):
+                is_dual_arm_input = True
+        
         try:
             import numpy as _np
             from robocore.transform import quaternion_to_matrix as _quat_to_mat, make_transform as _make_tf
@@ -597,37 +736,150 @@ class SynriaBessicaRobotAPI:
         except Exception as e:
             logger.error(f"未安装 RoboCore 或导入失败: {e}")
             return False
-        position = _np.array(target_pose[:3])
-        quaternion = _np.array(target_pose[3:])
-        rotation = _quat_to_mat(quaternion)
-        pose_end = _make_tf(rotation, position)
-        q_init = self.get_joints(arm=arm)
-        if not q_init or not isinstance(q_init, list):
-            logger.error("无法获取当前关节角度作为IK初值")
-            return False
-        try:
-            _, _, q_traj = _linear_cartesian_trajectory(
-                self.robot_model,
-                pose_start,
-                pose_end,
-                duration,
-                num_points=num_points,
-                q_init=_np.array(q_init),
-                ik_backend='numpy',
-                ik_method=ik_method,
-                max_iters=200,
-                pos_tol=1e-3,
-                ori_tol=1e-3,
-            )
-        except Exception as e:
-            logger.error(f"轨迹规划失败: {e}")
-            return False
-        delay = duration / num_points
-        for q in q_traj.tolist():
-            if not self.servo_driver.set_joint_angles(q, arm=arm, wait_for_completion=False):
+        
+        # 处理单臂模式
+        if arm in ("left_arm", "right_arm"):
+            if is_dual_arm_input:
+                logger.warning(f"单臂模式但输入了二维数组，使用第一个元素")
+                target_pose = target_pose[0]
+            
+            if len(target_pose) != 7:
+                logger.error(f"位姿必须是7个元素 [x, y, z, qx, qy, qz, qw]，但得到 {len(target_pose)} 个")
                 return False
-            time.sleep(delay)
-        return True
+            
+            current_pose = self.get_pose(arm=arm)
+            if current_pose is None:
+                logger.error("无法获取当前位姿")
+                return False
+            pose_start = current_pose['transform']
+            
+            position = _np.array(target_pose[:3])
+            quaternion = _np.array(target_pose[3:])
+            rotation = _quat_to_mat(quaternion)
+            pose_end = _make_tf(rotation, position)
+            
+            q_init = self.get_joints(arm=arm)
+            if not q_init or not isinstance(q_init, list) or len(q_init) != 7:
+                logger.error("无法获取当前关节角度作为IK初值")
+                return False
+            
+            try:
+                _, _, q_traj = _linear_cartesian_trajectory(
+                    self.robot_model,
+                    pose_start,
+                    pose_end,
+                    duration,
+                    num_points=num_points,
+                    q_init=_np.array(q_init),
+                    ik_backend='numpy',
+                    ik_method=ik_method,
+                    max_iters=200,
+                    pos_tol=1e-3,
+                    ori_tol=1e-3,
+                )
+            except Exception as e:
+                logger.error(f"轨迹规划失败: {e}")
+                return False
+            
+            delay = duration / num_points
+            for q in q_traj.tolist():
+                if not self.servo_driver.set_joint_angles(q, arm=arm, wait_for_completion=False):
+                    return False
+                time.sleep(delay)
+            return True
+        
+        # 处理双臂模式
+        elif arm == "both":
+            # 确定左右臂的目标位姿
+            if is_dual_arm_input:
+                if len(target_pose) != 2 or len(target_pose[0]) != 7 or len(target_pose[1]) != 7:
+                    logger.error("双臂模式需要 [[left_7_elements], [right_7_elements]] 格式")
+                    return False
+                target_pose_left = target_pose[0]
+                target_pose_right = target_pose[1]
+            elif target_pose_second_arm is not None:
+                if len(target_pose) != 7 or len(target_pose_second_arm) != 7:
+                    logger.error("双臂模式的位姿必须是7个元素 [x, y, z, qx, qy, qz, qw]")
+                    return False
+                target_pose_left = target_pose
+                target_pose_right = target_pose_second_arm
+            else:
+                logger.error("双臂模式需要提供两个位姿：使用二维数组或提供 target_pose_second_arm 参数")
+                return False
+            
+            # 获取当前位姿
+            current_pose = self.get_pose(arm="both")
+            if current_pose is None:
+                logger.error("无法获取当前位姿（双臂）")
+                return False
+            
+            pose_start_left = current_pose['transform'][0]
+            pose_start_right = current_pose['transform'][1]
+            
+            # 构建目标位姿矩阵
+            position_left = _np.array(target_pose_left[:3])
+            quaternion_left = _np.array(target_pose_left[3:])
+            rotation_left = _quat_to_mat(quaternion_left)
+            pose_end_left = _make_tf(rotation_left, position_left)
+            
+            position_right = _np.array(target_pose_right[:3])
+            quaternion_right = _np.array(target_pose_right[3:])
+            rotation_right = _quat_to_mat(quaternion_right)
+            pose_end_right = _make_tf(rotation_right, position_right)
+            
+            # 获取当前关节角度作为IK初值
+            q_init = self.get_joints(arm="both")
+            if not q_init or not isinstance(q_init, list) or len(q_init) != 2:
+                logger.error("无法获取当前关节角度作为IK初值（双臂）")
+                return False
+            
+            q_init_left = _np.array(q_init[0])
+            q_init_right = _np.array(q_init[1])
+            
+            try:
+                # 为左右臂分别生成轨迹
+                _, _, q_traj_left = _linear_cartesian_trajectory(
+                    self.robot_model,
+                    pose_start_left,
+                    pose_end_left,
+                    duration,
+                    num_points=num_points,
+                    q_init=q_init_left,
+                    ik_backend='numpy',
+                    ik_method=ik_method,
+                    max_iters=200,
+                    pos_tol=1e-3,
+                    ori_tol=1e-3,
+                )
+                _, _, q_traj_right = _linear_cartesian_trajectory(
+                    self.robot_model,
+                    pose_start_right,
+                    pose_end_right,
+                    duration,
+                    num_points=num_points,
+                    q_init=q_init_right,
+                    ik_backend='numpy',
+                    ik_method=ik_method,
+                    max_iters=200,
+                    pos_tol=1e-3,
+                    ori_tol=1e-3,
+                )
+            except Exception as e:
+                logger.error(f"轨迹规划失败: {e}")
+                return False
+            
+            delay = duration / num_points
+            for q_left, q_right in zip(q_traj_left.tolist(), q_traj_right.tolist()):
+                # 同时发送左右臂指令
+                success_left = self.servo_driver.set_joint_angles(q_left, arm="left_arm", wait_for_completion=False)
+                success_right = self.servo_driver.set_joint_angles(q_right, arm="right_arm", wait_for_completion=False)
+                if not (success_left and success_right):
+                    return False
+                time.sleep(delay)
+            return True
+        else:
+            logger.error(f"非法的 arm 参数: {arm}")
+            return False
 
     # ==================== 辅助方法 ====================
 

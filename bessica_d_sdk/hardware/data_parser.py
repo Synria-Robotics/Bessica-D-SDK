@@ -1,14 +1,9 @@
 import math
 import time
-import logging
+from ..utils.logger import logger
 from typing import List, Dict, Tuple, Optional, Union, NamedTuple
 import threading 
 import copy
-
-# 配置日志
-logging.basicConfig(level=logging.INFO, 
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("DataParser")
 
 class JointState(NamedTuple):
     """关节状态数据结构"""

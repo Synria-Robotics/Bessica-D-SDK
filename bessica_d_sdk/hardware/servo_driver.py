@@ -5,14 +5,9 @@ import threading
 from typing import List, Optional, Union, Tuple, Dict
 import numpy as np
 import traceback
-
+from ..utils.logger import logger
 from .serial_comm import SerialComm
 from .data_parser import DataParser, JointState, JointStateDict
-
-# 配置日志
-logging.basicConfig(level=logging.INFO, 
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("ServoDriver")
 
 
 
@@ -383,7 +378,6 @@ class ServoDriver:
             mapped_angles = [angle * self.direction_map[arm][i] for i, angle in enumerate(joint_angles)]
 
             frame = self._build_joint_frame(mapped_angles, arm=arm)
-            print(f"set_joint_angles: arm={arm}, frame={frame}")
             result = self.serial_comm.send_data(frame)
 
             # if gripper_angle is not None:
@@ -399,7 +393,7 @@ class ServoDriver:
                     time.sleep(0.01)
 
                 if time.time() - start_time >= timeout:
-                    logger.warning(f"等待目标位置超时")
+                    # logger.warning(f"等待目标位置超时")
                     return False
 
             return result
@@ -453,7 +447,7 @@ class ServoDriver:
                 return True
             time.sleep(0.01)
 
-        logger.warning(f"{arm} 夹爪运动完成超时")
+        # logger.warning(f"{arm} 夹爪运动完成超时")
         return False
 
     # ======================== 云台控制 ========================
@@ -914,7 +908,7 @@ class ServoDriver:
             return False
         current = self.read_joint_state(arm)
         if not current or len(current) != 7:
-            logger.warning(f"move_joints_deg: 当前未获取到 {arm} 有效角度，直接发送目标")
+            # logger.warning(f"move_joints_deg: 当前未获取到 {arm} 有效角度，直接发送目标")
             target = [a * self.DEG_TO_RAD for a in angles_deg]
             return self.set_joint_angles(joint_angles=target, arm=arm, wait_for_completion=True)
         target = [a * self.DEG_TO_RAD for a in angles_deg]

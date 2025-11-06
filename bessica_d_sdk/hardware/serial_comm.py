@@ -1,17 +1,13 @@
 import serial
 import serial.tools.list_ports
 import time
-import logging
+from ..utils.logger import logger
 import os
 from typing import List, Optional, Tuple
 import threading
 from datetime import datetime
 import json
 
-# 配置日志
-logging.basicConfig(level=logging.INFO, 
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("SerialComm")
 DEFAULT_LENGTH = 6   # 头(1)+指令(1)+长度(1)+识别(1)+校验(1)+尾(1)
 FRAME_LENGTH = 34
 FRAME_HEADER = 0xAA
