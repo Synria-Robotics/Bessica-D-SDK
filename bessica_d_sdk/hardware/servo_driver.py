@@ -348,7 +348,7 @@ class ServoDriver:
                         gripper_angle: float = None,
                         wait_for_completion: bool = True,
                         timeout: float = 5.0,
-                        tolerance: float = 0.08) -> bool:
+                        tolerance: float = 0.0524) -> bool:
         """
         设置机械臂关节角度（单位：弧度）
 
@@ -881,8 +881,15 @@ class ServoDriver:
         raw = int(max(0.0, min(3400.0, f * 3400.0)))
         return self.set_speed_raw(raw)
 
-    def move_joints_deg(self, arm: str, angles_deg: List[float]) -> bool:
-        """控制单臂7关节到指定角度（度制）。"""
+    def move_joints_deg(self, arm: str, angles_deg: List[float], wait_for_completion: bool = True, tolerance_deg: float = 3.0) -> bool:
+        """控制单臂7关节到指定角度（度制）。
+        
+        Args:
+            arm: "left_arm" 或 "right_arm"
+            angles_deg: 7个关节角度（度）
+            wait_for_completion: 是否等待运动完成
+            tolerance_deg: 每个关节允许的最大误差（度）
+        """
         if arm not in ["left_arm", "right_arm"]:
             logger.error(f"move_joints_deg: arm 参数无效: {arm}")
             return False
@@ -893,21 +900,26 @@ class ServoDriver:
         if not current or len(current) != 7:
             # logger.warning(f"move_joints_deg: 当前未获取到 {arm} 有效角度，直接发送目标")
             target = [a * self.DEG_TO_RAD for a in angles_deg]
-            return self.set_joint_angles(joint_angles=target, arm=arm, wait_for_completion=True)
+            tolerance_rad = tolerance_deg * self.DEG_TO_RAD
+            return self.set_joint_angles(joint_angles=target, arm=arm, wait_for_completion=wait_for_completion, tolerance=tolerance_rad)
         target = [a * self.DEG_TO_RAD for a in angles_deg]
+        tolerance_rad = tolerance_deg * self.DEG_TO_RAD
+        return self.set_joint_angles(joint_angles=target, arm=arm, wait_for_completion=wait_for_completion, tolerance=tolerance_rad)
 
 
     def move_dual_joints_deg(self,
                              left_angles_deg: List[float],
                              right_angles_deg: List[float],
-                             wait_for_completion: bool = False,
+                             wait_for_completion: bool = True,
+                             tolerance_deg: float = 3.0,
                              ) -> bool:
         """控制双臂14关节到指定角度（度制）。
         
         Args:
             left_angles_deg: 左臂7个关节角度（度）
             right_angles_deg: 右臂7个关节角度（度）
-            wait_for_completion: 是否等待运动完成（默认False，适合实时同步场景）
+            wait_for_completion: 是否等待运动完成（默认True）
+            tolerance_deg: 每个关节允许的最大误差（度，默认3.0）
         """
         if not (isinstance(left_angles_deg, list) and len(left_angles_deg) == 7 and isinstance(right_angles_deg, list) and len(right_angles_deg) == 7):
             logger.error("move_dual_joints_deg: 左右臂都必须提供7个角度(度)")
@@ -915,10 +927,11 @@ class ServoDriver:
         # current = self.read_joint_state(arm="both")
         target_left = [a * self.DEG_TO_RAD for a in left_angles_deg]
         target_right = [a * self.DEG_TO_RAD for a in right_angles_deg]
+        tolerance_rad = tolerance_deg * self.DEG_TO_RAD
 
-        # 双臂都不等待完成，适合实时同步场景（避免阻塞）
-        success = self.set_joint_angles(joint_angles=target_left, arm="left_arm", wait_for_completion=wait_for_completion)
-        success &= self.set_joint_angles(joint_angles=target_right, arm="right_arm", wait_for_completion=wait_for_completion)
+        # 双臂同步等待完成
+        success = self.set_joint_angles(joint_angles=target_left, arm="left_arm", wait_for_completion=wait_for_completion, tolerance=tolerance_rad)
+        success &= self.set_joint_angles(joint_angles=target_right, arm="right_arm", wait_for_completion=wait_for_completion, tolerance=tolerance_rad)
         return success
 
 

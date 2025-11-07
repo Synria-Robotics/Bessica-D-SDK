@@ -102,13 +102,14 @@ class SynriaBessicaRobotAPI:
         logger.info(f"set_home at head: arm={arm}")
         home_angles = [0.0] * 7
         if arm == "both":
-            # ok = self.servo_driver.move_dual_joints_deg(self.home_angles, self.home_angles, interpolate=True)
-            success = self.set_joint_target(target_joints=[home_angles,home_angles], arm="both")
+            success = self.servo_driver.move_dual_joints_deg(self.home_angles, self.home_angles,wait_for_completion=False)
             success &= self.set_gripper_target(command="open", arm="both")
+            # success = self.set_joint_target(target_joints=[home_angles,home_angles], arm="both", tolerance_deg=1.0)
+            # success &= self.set_gripper_target(command="open", arm="both")
             return success
         elif arm in ("left_arm", "right_arm"):
             print(f"set_home: arm={arm}")
-            ok = self.set_joint_target(target_joints=home_angles, arm=arm)
+            ok = self.set_joint_target(target_joints=home_angles, arm=arm, tolerance_deg=1.0)
             ok &= self.set_gripper_target(command="open", arm=arm)
             return ok
         else:
@@ -120,8 +121,8 @@ class SynriaBessicaRobotAPI:
         target_joints: Union[List[float], List[List[float]]],
         arm: Optional[str] = None,
         joint_format: str = "deg",
-        wait: bool = False,
-        speed_factor: float = 0.5,
+        wait: bool = True,
+        tolerance_deg: float = 3.0,
     ) -> bool:
         """Move robot to target joint angles.
 
@@ -129,7 +130,7 @@ class SynriaBessicaRobotAPI:
         :param arm: Arm to control, "left_arm", "right_arm", or "both" (default: self.default_arm)
         :param joint_format: Unit format, "deg" or "rad" (currently only "deg" supported)
         :param wait: Wait for motion completion if True
-        :param speed_factor: Speed multiplier (not currently used)
+        :param tolerance_deg: Maximum allowed error per joint in degrees when waiting for completion (default: 3.0)
         :return: True if command sent successfully
         """
         arm = arm or self.default_arm
@@ -143,14 +144,15 @@ class SynriaBessicaRobotAPI:
             return self.servo_driver.move_dual_joints_deg(
                 left_angles_deg=target_joints_left, 
                 right_angles_deg=target_joints_right,
-                wait_for_completion=wait
+                wait_for_completion=wait,
+                tolerance_deg=tolerance_deg
             )
         elif arm in ("left_arm"):
             # logger.info(f"set_joint_target: arm={arm}, target_joints={target_joints}")
-            return self.servo_driver.move_joints_deg(arm="right_arm", angles_deg=target_joints)
+            return self.servo_driver.move_joints_deg(arm="right_arm", angles_deg=target_joints, wait_for_completion=wait, tolerance_deg=tolerance_deg)
         elif arm in ("right_arm"):
             # print(f"set_joint_target: arm={arm}, target_joints={target_joints}")
-            return self.servo_driver.move_joints_deg(arm="left_arm", angles_deg=target_joints)
+            return self.servo_driver.move_joints_deg(arm="left_arm", angles_deg=target_joints, wait_for_completion=wait, tolerance_deg=tolerance_deg)
         else:
             logger.error(f"set_joint_target: 非法 arm={arm}")
             return False
