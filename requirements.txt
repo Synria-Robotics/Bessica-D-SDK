@@ -1,10 +1,16 @@
 pyserial>=3.0
-numpy>=1.21.0
 scipy>=1.7.0
-matplotlib>=3.3.0
+websockets==13.1
+numpy>=1.24.0
+matplotlib>=3.6.0
+opencv-python>=4.7.0
+sympy>=1.11.0
+pandas>=2.0.0
+pillow>=9.4.0
+scikit-learn>=1.2.0
 pyyaml>=6.0
 omegaconf>=2.3.0
-websockets==13.1
-mujoco
+mujoco>=2.3.0
+mujoco-py>=2.1.0
 robocore @ git+https://github.com/Synria-Robotics/RoboCore.git
 synriard @ git+https://github.com/Synria-Robotics/Synria-Robot-Descriptions.git

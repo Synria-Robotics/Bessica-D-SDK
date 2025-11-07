@@ -45,15 +45,14 @@ class SynriaBessicaRobotAPI:
     def __init__(
         self,
         servo_driver: ServoDriver,
-        # firmware_version: None,
         speed_deg_s: float = 20.0,
         robot_version: str = "v1_0",
     ):
         """Initialize robot API.
 
         :param servo_driver: Servo driver instance
-        :param firmware_version: Firmware version string
         :param speed_deg_s: Default speed in degrees per second
+        :param robot_version: Robot version string, e.g., "v1_0"
         """
         self.servo_driver = servo_driver
         # 在 API 内部创建 RobotModel 实例
@@ -80,30 +79,37 @@ class SynriaBessicaRobotAPI:
     # ==================== Connection Management ====================
 
     def connect(self) -> bool:
-        """Connect to robot."""
+        """Connect to robot.
+
+        :return: True if connection successful
+        """
         result = self.servo_driver.connect()
         return result
 
     def disconnect(self):
-        """Disconnect from robot."""
+        """Disconnect from robot and stop update threads."""
         self.servo_driver.stop_update_thread()
         self.servo_driver.disconnect()
 
     # ==================== 关节控制 ====================
-    def set_home(self, arm: str = "", speed_factor: float = 1.0) -> bool:
-        """回到零位。单臂传 7 关节 0；双臂依次/插值到 0。"""
+    def set_home(self, arm: str = "") -> bool:
+        """Move robot to home position.
+
+        :param arm: Arm to control, "left_arm", "right_arm", or "both" (default: self.default_arm)
+        :return: True if successful
+        """
         arm = arm or self.default_arm
         logger.info(f"set_home at head: arm={arm}")
         home_angles = [0.0] * 7
         if arm == "both":
             # ok = self.servo_driver.move_dual_joints_deg(self.home_angles, self.home_angles, interpolate=True)
             success = self.set_joint_target(target_joints=[home_angles,home_angles], arm="both")
-            success &= self.servo_driver.open_gripper_deg(angle_deg=99.9, arm="both", wait=True)
+            success &= self.set_gripper_target(command="open", arm="both")
             return success
         elif arm in ("left_arm", "right_arm"):
             print(f"set_home: arm={arm}")
             ok = self.set_joint_target(target_joints=home_angles, arm=arm)
-            ok &= self.servo_driver.open_gripper_deg(angle_deg=99.9, arm=arm, wait=True)
+            ok &= self.set_gripper_target(command="open", arm=arm)
             return ok
         else:
             logger.error(f"set_home: 非法 arm={arm}")
@@ -114,10 +120,18 @@ class SynriaBessicaRobotAPI:
         target_joints: Union[List[float], List[List[float]]],
         arm: Optional[str] = None,
         joint_format: str = "deg",
-        wait: bool = True,
+        wait: bool = False,
         speed_factor: float = 0.5,
     ) -> bool:
-        """将单臂移动到目标关节角,或让双臂镜像移动关节角"""
+        """Move robot to target joint angles.
+
+        :param target_joints: Target joint angles. For single arm: List[float] (7 angles). For dual arm: List[List[float]] (2x7 angles)
+        :param arm: Arm to control, "left_arm", "right_arm", or "both" (default: self.default_arm)
+        :param joint_format: Unit format, "deg" or "rad" (currently only "deg" supported)
+        :param wait: Wait for motion completion if True
+        :param speed_factor: Speed multiplier (not currently used)
+        :return: True if command sent successfully
+        """
         arm = arm or self.default_arm
         if joint_format.lower() not in ("deg", "degree", "degrees"):
             logger.error("set_joint_target 目前仅支持 joint_format='deg'")
@@ -126,7 +140,11 @@ class SynriaBessicaRobotAPI:
             # shape the target_joints to a list of two lists
             target_joints_left = target_joints[0]
             target_joints_right = target_joints[1]
-            return self.servo_driver.move_dual_joints_deg(left_angles_deg=target_joints_left, right_angles_deg=target_joints_right)
+            return self.servo_driver.move_dual_joints_deg(
+                left_angles_deg=target_joints_left, 
+                right_angles_deg=target_joints_right,
+                wait_for_completion=wait
+            )
         elif arm in ("left_arm"):
             # logger.info(f"set_joint_target: arm={arm}, target_joints={target_joints}")
             return self.servo_driver.move_joints_deg(arm="right_arm", angles_deg=target_joints)
@@ -147,22 +165,22 @@ class SynriaBessicaRobotAPI:
                         max_iters: int = 100,
                         multi_start: int = 0,
                         use_random_init: bool = False,
-                        speed_factor: float = 1.0,
                         arm: str = "both",
                         execute: bool = True) -> Dict:
-        """基于逆解将末端移动到目标位姿。
+        """Move end-effector to target pose using inverse kinematics.
 
-        :param target_pose: 目标位姿 [x, y, z, qx, qy, qz, qw]
-        :param backend: 'numpy' 或 'torch'
-        :param method: 'dls'/'pinv'/'transpose'
-        :param display: 是否打印求解细节
-        :param tolerance: 位置与姿态容差
-        :param max_iters: 最大迭代次数
-        :param multi_start: 多起点尝试次数
-        :param use_random_init: 是否使用随机初值
-        :param speed_factor: 运动速度因子（用于插值）
-        :param execute: 是否执行得到的关节解
-        :return: 包含 success/q/iters/pos_err/ori_err/message/motion_executed 等字段
+        :param target_pose: Target pose as [x, y, z, qx, qy, qz, qw]
+        :param target_pose_second_arm: Target pose for second arm (required when arm="both")
+        :param backend: Computation backend, 'numpy' or 'torch'
+        :param method: IK solver method, 'dls', 'pinv', or 'transpose'
+        :param display: Display solution details
+        :param tolerance: Position and orientation tolerance
+        :param max_iters: Maximum number of iterations
+        :param multi_start: Number of multi-start attempts, 0 to disable
+        :param use_random_init: Use random initial guess instead of current pose
+        :param arm: Arm to control, "left_arm", "right_arm", or "both"
+        :param execute: Execute motion if True
+        :return: Dictionary with success, q, iters, pos_err, ori_err, message, motion_executed
         """
         if not hasattr(self, 'robot_model') or self.robot_model is None:
             return {
@@ -353,14 +371,19 @@ class SynriaBessicaRobotAPI:
         arm: str,
         command: Optional[str] = None,
         value: Optional[float] = None,
-        wait_for_completion: bool = True,
+        wait_for_completion: bool = False,
         timeout: float = 1.0,
         tolerance: float = 0.1,
     ) -> bool:
-        """
-        控制夹爪：
-        - command: 'open' or 'close'
-        - value: 角度值（单位：度，0~100），内部转换为弧度传给 ServoDriver
+        """Control gripper position.
+
+        :param arm: Arm to control, "left_arm", "right_arm", or "both"
+        :param command: Command string, 'open' or 'close'
+        :param value: Gripper value in degrees, 0 (closed) to 100 (open)
+        :param wait_for_completion: Wait until gripper reaches target
+        :param timeout: Maximum wait time in seconds
+        :param tolerance: Acceptable difference to target value in degrees
+        :return: True if successful
         """
         arm = arm or self.default_arm
         if (command is None) == (value is None):
@@ -368,9 +391,9 @@ class SynriaBessicaRobotAPI:
             return False
         if command is not None:
             if command == 'open':
-                value = 100.0
-            elif command == 'close':
                 value = 0.0
+            elif command == 'close':
+                value = 100.0
             else:
                 logger.error("command 仅支持 'open'/'close'")
                 return False
@@ -380,13 +403,18 @@ class SynriaBessicaRobotAPI:
         if arm in ("left_arm", "right_arm"):
             return self.servo_driver.set_gripper_deg(arm=arm, angle_deg=float(value), wait=wait_for_completion)
         elif arm == "both":
-            return self.servo_driver.open_gripper_deg(angle_deg=float(value), arm="both", wait=wait_for_completion)
+            return self.servo_driver.set_gripper_deg(angle_deg=float(value), arm="both", wait=wait_for_completion)
         else:
             logger.error(f"set_gripper_target: 非法 arm={arm}")
             return False
 
     # ==================== 位姿与状态 ====================
     def get_joints(self, arm: Optional[str] = None) -> Optional[Union[List[float], List[List[float]]]]:
+        """Get current joint angles.
+
+        :param arm: Arm to query, "left_arm", "right_arm", or "both" (default: self.default_arm)
+        :return: Joint angles in degrees. For single arm: List[float] (7 angles). For dual arm: List[List[float]] (2x7 angles). None if unavailable
+        """
         self.default_arm = "both"
         arm = arm or self.default_arm
         joint_angles = self.servo_driver.read_joint_angles(arm)
@@ -395,6 +423,11 @@ class SynriaBessicaRobotAPI:
         return joint_angles
 
     def get_gripper(self, arm: Optional[str] = None) -> Optional[Union[float, Tuple[float, float]]]:
+        """Get current gripper position.
+
+        :param arm: Arm to query, "left_arm", "right_arm", or "both" (default: self.default_arm)
+        :return: Gripper position in degrees. For single arm: float. For dual arm: Tuple[float, float]. None if unavailable
+        """
         arm = arm or self.default_arm
         try:
             return self.servo_driver.read_gripper_data(arm if arm in ['left_arm', 'right_arm'] else 'both')
@@ -402,6 +435,11 @@ class SynriaBessicaRobotAPI:
             return None
 
     def get_pose(self, arm: Optional[str] = None) -> Optional[Dict]:
+        """Get current end-effector pose.
+
+        :param arm: Arm to query, "left_arm", "right_arm", or "both" (default: self.default_arm)
+        :return: Dictionary with transform, position, rotation, euler_xyz, quaternion_xyzw, output_to_ik. None if unavailable
+        """
         if self.robot_model is None:
             logger.error("未安装 RoboCore 或未提供 robot_model，无法计算位姿")
             return None
@@ -484,13 +522,23 @@ class SynriaBessicaRobotAPI:
 
     # ==================== 系统控制 ====================
     def set_speed(self, speed_deg_s: float) -> bool:
-        """设置运动速度（度/秒）。"""
+        """Set motion speed.
+
+        :param speed_deg_s: Speed in degrees per second
+        :return: True if successful
+        """
         return self.servo_driver.set_speed_deg_s(speed_deg_s)
 
     # def set_speed_factor(self, speed_factor: float) -> bool:
     #     """按系数设置速度：factor=1.0 → 原始值约 1000。"""
     #     return self.servo_driver.set_speed_factor(speed_factor)
     def torque_control(self, command: str, arm: str = 'both') -> bool:
+        """Enable or disable torque control.
+
+        :param command: Command string, 'on' to enable or 'off' to disable
+        :param arm: Arm to control, "left_arm", "right_arm", or "both"
+        :return: True if successful
+        """
         if command == 'on':
             return self.servo_driver.enable_torque(arm)
         elif command == 'off':
@@ -500,6 +548,11 @@ class SynriaBessicaRobotAPI:
             return False
 
     def set_zero(self, arm: str = 'both') -> bool:
+        """Set zero position for specified arm(s).
+
+        :param arm: Arm to set zero, "left_arm", "right_arm", or "both"
+        :return: True if successful
+        """
         logger.info(f"即将将{arm}关闭扭矩，请确定环境正常,输入enter继续...")
         input()
         self.torque_control(command="off", arm=arm)
@@ -520,24 +573,16 @@ class SynriaBessicaRobotAPI:
         joint_format: str = 'rad',
         visualize: bool = False,
     ) -> bool:
-        """关节空间轨迹到达 q_end。
-        
-        - 支持 'linear'/'cubic'/'quintic'（有 RoboCore 时）
-        - 无 RoboCore 时退化为线性插值
-        
-        Args:
-            q_end: 
-                - 单臂模式（arm="left_arm" 或 "right_arm"）: 一维数组，7个关节角度
-                - 双臂模式（arm="both"）: 二维数组 [[left_7_joints], [right_7_joints]]
-            arm: "left_arm", "right_arm" 或 "both"（默认使用 self.default_arm）
-            duration: 轨迹持续时间（秒）
-            method: 插值方法 'linear'/'cubic'/'quintic'
-            num_points: 轨迹点数量
-            joint_format: 'rad' 或 'deg'
-            visualize: 是否可视化（暂未实现）
-        
-        Returns:
-            bool: 是否成功执行
+        """Move robot along joint space trajectory to target.
+
+        :param q_end: Target joint angles. For single arm: List[float] (7 angles). For dual arm: List[List[float]] (2x7 angles)
+        :param arm: Arm to control, "left_arm", "right_arm", or "both" (default: self.default_arm)
+        :param duration: Trajectory duration in seconds
+        :param method: Interpolation method, 'linear', 'cubic', or 'quintic'
+        :param num_points: Number of trajectory points
+        :param joint_format: Unit format, 'rad' or 'deg'
+        :param visualize: Enable trajectory visualization (not implemented)
+        :return: True if successful
         """
         arm = arm or self.default_arm
         
@@ -697,25 +742,18 @@ class SynriaBessicaRobotAPI:
         ik_method: str = 'dls',
         visualize: bool = False,
     ) -> bool:
-        """笛卡尔直线轨迹到达目标位姿。
-        
-        需要 robot_model 和 RoboCore；否则返回失败。
-        
-        Args:
-            target_pose: 
-                - 单臂模式（arm="left_arm" 或 "right_arm"）: 一维数组 [x, y, z, qx, qy, qz, qw]
-                - 双臂模式（arm="both"）: 
-                    - 方式1: 二维数组 [[left_pose], [right_pose]]，每个pose为7个元素
-                    - 方式2: 一维数组作为左臂位姿，并提供 target_pose_second_arm 作为右臂位姿
-            arm: "left_arm", "right_arm" 或 "both"（默认使用 self.default_arm）
-            target_pose_second_arm: 双臂模式下的右臂目标位姿（可选，如果 target_pose 是二维数组则忽略）
-            duration: 轨迹持续时间（秒）
-            num_points: 轨迹点数量
-            ik_method: IK求解方法 'dls'/'pinv'/'transpose'
-            visualize: 是否可视化（暂未实现）
-        
-        Returns:
-            bool: 是否成功执行
+        """Move end-effector along linear Cartesian trajectory to target pose.
+
+        Requires robot_model and RoboCore; returns False if unavailable.
+
+        :param target_pose: Target pose as [x, y, z, qx, qy, qz, qw]. For single arm: List[float] (7 elements). For dual arm: List[List[float]] (2x7 elements) or List[float] with target_pose_second_arm
+        :param arm: Arm to control, "left_arm", "right_arm", or "both" (default: self.default_arm)
+        :param target_pose_second_arm: Target pose for second arm (required when arm="both" and target_pose is 1D)
+        :param duration: Trajectory duration in seconds
+        :param num_points: Number of trajectory points
+        :param ik_method: IK solver method, 'dls', 'pinv', or 'transpose'
+        :param visualize: Enable trajectory visualization (not implemented)
+        :return: True if successful
         """
         if self.robot_model is None:
             logger.error("未提供 robot_model，无法执行笛卡尔轨迹")

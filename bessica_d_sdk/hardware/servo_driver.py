@@ -384,7 +384,7 @@ class ServoDriver:
             #     result &= self.set_gripper(gripper_angle, arm=arm)
 
             if wait_for_completion and result:
-                logger.info(f"等待目标位置")
+                # 等待运动完成（仅在需要时使用，实时同步场景应使用 wait_for_completion=False）
                 start_time = time.time()
                 while time.time() - start_time < timeout:
                     angles_now = self.data_parser.get_joint_state(arm).angles
@@ -880,23 +880,6 @@ class ServoDriver:
             return False
         raw = int(max(0.0, min(3400.0, f * 3400.0)))
         return self.set_speed_raw(raw)
-    @staticmethod
-
-    def move_joint_deg(self, arm: str, joint_id: int, angle_deg: float) -> bool:
-        """控制单臂单关节到指定角度（度制）。joint_id: 0~6。"""
-        if arm not in ["left_arm", "right_arm"]:
-            logger.error(f"move_joint_deg: arm 参数无效: {arm}")
-            return False
-        if not (0 <= joint_id <= 6):
-            logger.error(f"move_joint_deg: joint_id 超界: {joint_id}")
-            return False
-        state = self.read_joint_state(arm)
-        if not state:
-            logger.error(f"move_joint_deg: 读取 {arm} 状态失败")
-            return False
-        current = list(state.angles)
-        target = current[:]
-        target[joint_id] = angle_deg * self.DEG_TO_RAD
 
     def move_joints_deg(self, arm: str, angles_deg: List[float]) -> bool:
         """控制单臂7关节到指定角度（度制）。"""
@@ -917,8 +900,15 @@ class ServoDriver:
     def move_dual_joints_deg(self,
                              left_angles_deg: List[float],
                              right_angles_deg: List[float],
+                             wait_for_completion: bool = False,
                              ) -> bool:
-        """控制双臂14关节到指定角度（度制）。"""
+        """控制双臂14关节到指定角度（度制）。
+        
+        Args:
+            left_angles_deg: 左臂7个关节角度（度）
+            right_angles_deg: 右臂7个关节角度（度）
+            wait_for_completion: 是否等待运动完成（默认False，适合实时同步场景）
+        """
         if not (isinstance(left_angles_deg, list) and len(left_angles_deg) == 7 and isinstance(right_angles_deg, list) and len(right_angles_deg) == 7):
             logger.error("move_dual_joints_deg: 左右臂都必须提供7个角度(度)")
             return False
@@ -926,34 +916,26 @@ class ServoDriver:
         target_left = [a * self.DEG_TO_RAD for a in left_angles_deg]
         target_right = [a * self.DEG_TO_RAD for a in right_angles_deg]
 
-        success = self.set_joint_angles(joint_angles=target_left, arm="left_arm", wait_for_completion=False)
-        success &= self.set_joint_angles(joint_angles=target_right, arm="right_arm", wait_for_completion=True)
+        # 双臂都不等待完成，适合实时同步场景（避免阻塞）
+        success = self.set_joint_angles(joint_angles=target_left, arm="left_arm", wait_for_completion=wait_for_completion)
+        success &= self.set_joint_angles(joint_angles=target_right, arm="right_arm", wait_for_completion=wait_for_completion)
         return success
 
 
-    def set_gripper_deg(self, arm: str, angle_deg: float, wait: bool = True) -> bool:
+    def set_gripper_deg(self, arm: str, angle_deg: float, wait: bool = False) -> bool:
         """设置夹爪角度（度制）。"""
-        if arm not in ["left_arm", "right_arm"]:
+        if arm not in ["left_arm", "right_arm" , "both"]:
             logger.error(f"set_gripper_deg: arm 参数无效: {arm}")
             return False
         angle_rad = angle_deg * self.DEG_TO_RAD
-        return self.set_gripper(angle_rad, arm=arm, wait_for_completion=wait)
-
-    def open_gripper_deg(self, angle_deg: float = 100.0, arm: str = "both", wait: bool = True) -> bool:
-        """打开夹爪（度制，默认100°）。支持 both/单臂。"""
-        if arm == "both":
-            left_ok = self.set_gripper_deg("left_arm", angle_deg, wait)
-            right_ok = self.set_gripper_deg("right_arm", angle_deg, wait)
-            return left_ok and right_ok
+        if arm in ["left_arm", "right_arm"]:
+            return self.set_gripper(angle_rad, arm=arm, wait_for_completion=wait)
+        elif arm == "both":
+            return self.set_gripper(angle_rad, arm="left_arm", wait_for_completion=wait) and self.set_gripper(angle_rad, arm="right_arm", wait_for_completion=wait)
         else:
-            return self.set_gripper_deg(arm, angle_deg, wait)
+            logger.error(f"set_gripper_deg: arm 参数无效: {arm}")
+            return False
 
-    def close_gripper_deg(self, arm: str = None, wait: bool = True) -> bool:
-        """关闭夹爪（度制，设置为0°）。支持 both/单臂。"""
-        if arm in (None, "both"):
-            return self.open_gripper_deg(angle_deg=0.0, arm="both", wait=wait)
-        else:
-            return self.set_gripper_deg(arm, 0.0, wait)
 
     def print_joint_angles_deg(self, arm: str = "both", read_gripper: bool = True):
         """打印当前关节角度（度）。"""
