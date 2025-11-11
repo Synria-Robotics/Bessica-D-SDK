@@ -140,8 +140,10 @@ class DataParser:
         返回统一结构 dual_arm_joint_data
         """
         try:
-            if frame[3] != self.PRESENT_POSITION:
-                logger.warning(f"关节数据类型错误: ident=0x{frame[3]:02X}")
+            # 兼容旧/新协议的 IDENT：有的固件返回 0x00，有的返回 PRESENT_POSITION(0x38)
+            ident = frame[3]
+            if ident not in (0x00, self.PRESENT_POSITION):
+                logger.warning(f"关节数据类型错误: ident=0x{ident:02X}")
                 return None
             data_len = frame[2]
             # 规范化有效载荷长度（不含 ident/参数）

@@ -61,7 +61,19 @@ class SerialComm:
         """
         try:
             # 查找可用串口
-            port = self.find_serial_port()
+            # 若用户明确指定端口，优先直接尝试使用该端口
+            port = ""
+            if self.port_name:
+                # 允许传入 "ttyACM0" 或完整路径 "/dev/ttyACM0"
+                candidate = self.port_name
+                if not candidate.startswith("/dev/"):
+                    candidate = f"/dev/{candidate}"
+                port = candidate if os.path.exists(candidate) else ""
+                if not port:
+                    # 回退到自动搜索（兼容不同系统命名）
+                    port = self.find_serial_port()
+            else:
+                port = self.find_serial_port()
             
             # 没有找到可用串口
             if not port:
@@ -87,11 +99,17 @@ class SerialComm:
                     logger.info(f"当前指定波特率为 {self.baudrate}, 该波特率macOS可能不能识别")
 
             # 设置串口参数
-            self.serial_port = serial.Serial(
-                port=port,
-                baudrate=self.baudrate,
-                timeout=self.timeout
-            )
+            try:
+                self.serial_port = serial.Serial(
+                    port=port,
+                    baudrate=self.baudrate,
+                    timeout=self.timeout
+                )
+            except Exception as e:
+                # 常见为权限错误：OSError: [Errno 13] Permission denied: '/dev/ttyACM0'
+                logger.error(f"打开串口失败: {e}")
+                logger.error("请检查权限：将当前用户加入 dialout 组后重新登录，或临时执行 'sudo chmod 666 {port}' 测试")
+                return False
             
             if self.serial_port.is_open:
                 logger.info("串口连接成功")
@@ -139,43 +157,30 @@ class SerialComm:
         if not ports:
             return ""
         
-        # 首先尝试使用指定的端口
+        # 首先尝试使用指定的端口（放宽检查：不以权限过滤）
         if self.port_name:
             for port in ports:
-                if self.port_name in port.device:
-                    if os.access(port.device, os.R_OK | os.W_OK):
-                        if should_log:
-                            logger.info(f"使用指定的端口: {port.device}")
-                        return port.device
+                device_path = port.device
+                if self.port_name in (device_path, os.path.basename(device_path)) or self.port_name in device_path:
+                    if should_log:
+                        logger.info(f"使用指定的端口: {device_path}")
+                    return device_path
             
             if should_log:
                 logger.warning(f"指定的端口 {self.port_name} 不可用，将搜索其他设备")
         
         # 尝试找到可用的设备
+        preferred_prefixes = ("ttyACM", "ttyUSB", "cu.usbserial", "COM")
         for port in ports:
-            #尝试找到可用的ttyUSB设备
-            if "ttyUSB" in port.device:
-                if os.access(port.device, os.R_OK | os.W_OK):
-                    if should_log:
-                        logger.info(f"找到可用设备: {port.device}")
-                    return port.device
-                
-            #尝试找到可用的cu.usbserial设备
-            elif "cu.usbserial" in port.device:
-                if os.access(port.device, os.R_OK | os.W_OK):
-                    if should_log:
-                        logger.info(f"找到可用设备: {port.device}")
-                    return port.device
-
-            #尝试找到可用的COM设备
-            elif "COM" in port.device:
-                if os.access(port.device, os.R_OK | os.W_OK):
-                    if should_log:
-                        logger.info(f"找到可用设备: {port.device}")
-                    return port.device
+            device_path = port.device
+            if any(prefix in device_path for prefix in preferred_prefixes):
+                # 放宽：不再以 os.access 作为硬阻塞条件，实际可用性由后续 open 测试
+                if should_log:
+                    logger.info(f"找到可用设备: {device_path}")
+                return device_path
 
         if should_log:
-            logger.warning("未找到可用的ttyUSB或者cu.usbserial设备")
+            logger.warning("未找到可用的 ttyACM/ttyUSB/cu.usbserial/COM 设备")
         return ""
     
     def send_data(self, data: List[int]) -> bool:
