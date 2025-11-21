@@ -32,10 +32,11 @@ from robocore.planning.trajectory import (
     circular_cartesian_trajectory,
     cartesian_waypoint_trajectory
 )
+from ..utils.logger import logger
 from ..hardware import ServoDriver
 # from ..execution import HardwareExecutor, JointPlanner
 # from ..utils.logger import logger
-logger = logging.getLogger("SynriaBessicaRobotAPI")
+# logger = logging.getLogger("SynriaBessicaRobotAPI")
 # from robocore.utils.control_utils import compute_steps_and_delay, validate_joint_list
 
 
@@ -121,7 +122,7 @@ class SynriaBessicaRobotAPI:
         target_joints: Union[List[float], List[List[float]]],
         arm: Optional[str] = None,
         joint_format: str = "deg",
-        wait: bool = True,
+        wait: bool = False,
         tolerance_deg: float = 3.0,
     ) -> bool:
         """Move robot to target joint angles.
@@ -393,9 +394,9 @@ class SynriaBessicaRobotAPI:
             return False
         if command is not None:
             if command == 'open':
-                value = 0.0
+                value = 0.1
             elif command == 'close':
-                value = 100.0
+                value = 99.9
             else:
                 logger.error("command 仅支持 'open'/'close'")
                 return False
@@ -556,6 +557,7 @@ class SynriaBessicaRobotAPI:
         :return: True if successful
         """
         logger.info(f"即将将{arm}关闭扭矩，请确定环境正常,输入enter继续...")
+        #logging.info(f"即将将{arm}关闭扭矩，请确定环境正常,输入enter继续...")
         input()
         self.torque_control(command="off", arm=arm)
         logger.info(f"{arm}扭矩已关闭，请手动拖动机械臂到零点位置，然后按enter继续来设置该位置为零点...")
