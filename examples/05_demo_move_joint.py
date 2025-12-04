@@ -34,17 +34,17 @@ def main(args):
             print("✗ Connection failed, please check serial port settings")
             return
         robot.set_speed(speed_deg_s=args.speed_deg_s)
-        left_angles = [30, 35, 58, -45, -40, -35, 0]
-        right_angles = [30, 35, 58, -45, -40, -35, 0]
+        left_angles = [45, -14, 35, -30, -42, -45, -9]
+        right_angles = [45, -14, 40 ,-30, -42, -45, -7]
         both_angles = [15, 25, 25, 15, 50, 25, 0]
         home_angles = [0.0] * 7
         robot.set_home()
         time.sleep(5)
+        #robot.set_joint_target(target_joints=right_angles, arm="right_arm")
         robot.set_joint_target(target_joints=left_angles, arm="left_arm")
-        robot.set_joint_target(target_joints=right_angles, arm="right_arm")
-        time.sleep(5)
-        robot.set_home(arm="both")
-        robot.set_gripper_target(arm="both", command="close")
+        # time.sleep(5)
+        # #robot.set_home(arm="both")
+        # robot.set_gripper_target(arm="both", command="close")
         # 您可自行输入目标关节角度，然后控制机械臂移动到目标位置
         # self_target=[]
         # robot.set_joint_target(target_joints=self_target, arm=args.arm)
@@ -60,10 +60,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Robot joint movement control")
     
     # Robot configuration
-    parser.add_argument('--port', type=str, default="COM1", help="串口端口 (例如: /dev/ttyUSB0 或 COM3)")
+    parser.add_argument('--port', type=str, default="", help="串口端口 (例如: /dev/ttyUSB0 或 COM3)")
     parser.add_argument('--baudrate', type=int, default=1000000,  help="波特率 (默认: 1000000)")
     parser.add_argument('--robot_version', type=str, default="v1_0",  help="机械臂版本 (默认: v1_0)")
     parser.add_argument('--arm', type=str, default="both", choices=["left_arm", "right_arm", "both"], help="机械臂 (默认: both)")
-    parser.add_argument('--speed_deg_s', type=float, default=20.0,  help="运动速度 (度/秒, 默认: 20.0)")
+    parser.add_argument('--speed_deg_s', type=float, default=30.0,  help="运动速度 (度/秒, 默认: 20.0)")
     args = parser.parse_args()
     main(args)

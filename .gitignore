@@ -45,3 +45,6 @@ venv.bak/
 # Other
 # Thumbs.db
 # ehthumbs.db
+
+# Logs
+logs/

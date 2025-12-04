@@ -33,9 +33,9 @@ def main(args):
         logger.info("Please manually hold the robot arm.")
         logger.info("请托住机械臂以免其突然掉落。")
         input("Press Enter to disable torque...")
-        robot.torque_control('off',arm="left_arm")
+        robot.torque_control('off',arm="both")
         input("Press Enter to re-enable torque...")
-        robot.torque_control('on',arm="left_arm")
+        robot.torque_control('on',arm="both")
         logger.info("Torque re-enabled.")
         
     except Exception as e:
