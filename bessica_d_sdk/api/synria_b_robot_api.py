@@ -562,9 +562,59 @@ class SynriaBessicaRobotAPI:
         self.torque_control(command="off", arm=arm)
         logger.info(f"{arm}扭矩已关闭，请手动拖动机械臂到零点位置，然后按enter继续来设置该位置为零点...")
         input()
-        result = self.servo_driver.set_zero_position(arm)
+        result = self.servo_driver.set_zero_position(arm="both")
         self.torque_control(command="on", arm=arm)
         logger.info(f"{arm}归零成功: {result}")
+
+    # ==================== 云台控制 ====================
+    def set_gimbal(
+        self,
+        x_angle: float,
+        y_angle: float,
+        angle_format: str = "deg",
+        wait_for_completion: bool = False,
+        timeout: float = 5.0,
+        tolerance: float = 3.0,
+    ) -> bool:
+        """Set gimbal X/Y axis angles.
+
+        :param x_angle: X-axis angle (pan)
+        :param y_angle: Y-axis angle (tilt)
+        :param angle_format: Angle unit format, "deg" (degrees) or "rad" (radians). Default: "deg"
+        :param wait_for_completion: Wait until gimbal reaches target position if True
+        :param timeout: Maximum wait time in seconds (only used if wait_for_completion=True)
+        :param tolerance: Acceptable difference to target value. Unit depends on angle_format:
+                          - If angle_format="deg": tolerance in degrees (default: 3.0)
+                          - If angle_format="rad": tolerance in radians (default: 0.05)
+        :return: True if command sent successfully
+        """
+        if not isinstance(x_angle, (int, float)) or not isinstance(y_angle, (int, float)):
+            logger.error("set_gimbal: 角度应为 float 类型")
+            return False
+        
+        if angle_format.lower() not in ("deg", "degree", "degrees", "rad", "radian", "radians"):
+            logger.error(f"set_gimbal: angle_format 必须为 'deg' 或 'rad'，当前: {angle_format}")
+            return False
+        
+        # 根据 angle_format 转换为弧度
+        if angle_format.lower() in ("deg", "degree", "degrees"):
+            # 度制输入，转换为弧度
+            x_angle_rad = x_angle * self.servo_driver.DEG_TO_RAD
+            y_angle_rad = y_angle * self.servo_driver.DEG_TO_RAD
+            tolerance_rad = tolerance * self.servo_driver.DEG_TO_RAD
+        else:
+            # 弧度制输入，直接使用
+            x_angle_rad = x_angle
+            y_angle_rad = y_angle
+            tolerance_rad = tolerance
+        
+        return self.servo_driver.set_gimbal(
+            x_angle_rad=x_angle_rad,
+            y_angle_rad=y_angle_rad,
+            wait_for_completion=wait_for_completion,
+            timeout=timeout,
+            tolerance=tolerance_rad
+        )
 
     # ==================== 笛卡尔控制接口（可用 RoboCore 时增强） ====================
     def move_joint_trajectory(

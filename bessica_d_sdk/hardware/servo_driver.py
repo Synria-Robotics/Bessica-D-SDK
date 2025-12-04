@@ -320,7 +320,7 @@ class ServoDriver:
     
     def read_joint_state(self, arm: str = 'both') -> Optional[Union[JointState, JointStateDict]]:
         """
-        读取机械臂的suoyo信息。
+        读取机械臂的所有信息。
 
         Returns:
             Optional[Union[JointState, JointStateDict]]:
@@ -506,7 +506,7 @@ class ServoDriver:
                                tolerance=tolerance)
 
     
-    def set_zero_position(self, arm:str) -> bool:
+    def set_zero_position(self, arm:str="both") -> bool:
         """
         设置当前位置为零点
         
