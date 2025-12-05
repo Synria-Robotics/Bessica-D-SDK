@@ -231,15 +231,15 @@ class SynriaBessicaRobotAPI:
                     logger.info(f"  姿态误差: {ik_result['ori_err']:.6e} rad")
                     logger.info(f"  关节角度 (rad): {[f'{q:+.4f}' for q in ik_result['q']]}")
                     logger.info(f"  关节角度 (deg): {[f'{np.rad2deg(q):+.2f}' for q in ik_result['q']]}")
-                if execute:
+                # if execute:
                     q = np.rad2deg(ik_result['q'])
                     print(f"q: {q}")
                     success = self.set_joint_target(q.tolist(), arm=arm)
                     ik_result['motion_executed'] = bool(success)
-                else:
-                    ik_result['motion_executed'] = False
-                    if display:
-                        logger.info("  (未执行运动，execute=False)")
+                # else:
+                #     ik_result['motion_executed'] = False
+                #     if display:
+                #         logger.info("  (未执行运动，execute=False)")
                 return ik_result
             else:
                 if display:
@@ -320,18 +320,18 @@ class SynriaBessicaRobotAPI:
                     logger.info(f"  右臂姿态误差: {ik_result_r.get('ori_err', 0.0):.6e} rad")
                     logger.info(f"  右关节角度 (rad): {[f'{q:+.4f}' for q in ik_result_r['q']]}")
                     logger.info(f"  右关节角度 (deg): {[f'{np.rad2deg(q):+.2f}' for q in ik_result_r['q']]}")
-                if execute:
+                # if execute:
                     q_l = np.rad2deg(ik_result_l['q'])
                     q_r = np.rad2deg(ik_result_r['q'])
                     q = [q_l.tolist(), q_r.tolist()]
                     ok = self.set_joint_target(target_joints=q, arm="both")
                     ik_result_l['motion_executed'] = bool(ok)
                     ik_result_r['motion_executed'] = bool(ok)
-                else:
-                    ik_result_l['motion_executed'] = False
-                    ik_result_r['motion_executed'] = False
-                    if display:
-                        logger.info("  (未执行运动，execute=False)")
+                # else:
+                #     ik_result_l['motion_executed'] = False
+                #     ik_result_r['motion_executed'] = False
+                #     if display:
+                #         logger.info("  (未执行运动，execute=False)")
                 return ik_result_l, ik_result_r
             else:
                 if display:
