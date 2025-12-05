@@ -49,7 +49,7 @@ Bessica-D-SDK/
 │   ├── 07_demo_forward_kinematics.py    # 正运动学
 │   ├── 08_demo_inverse_kinematics.py   # 逆运动学
 │   ├── 09_demo_drage_teaching.py        # 拖拽示教
-│   └── demo_interactivate_mode.py       # 交互式控制菜单
+│   └── 10_demo_mujoco_real_robot_bridge.py      # mujoco控制真机
 │
 ├── docs/                         # 文档
 │   ├── api_reference.md          # API 参考
@@ -79,8 +79,7 @@ Bessica-D-SDK/
     # 逆运动学控制
     python examples/08_demo_inverse_kinematics.py --port /dev/ttyACM0
     
-    # 交互式控制菜单
-    python examples/demo_interactivate_mode.py
+
     ```
 
 3.  **基本使用**:
