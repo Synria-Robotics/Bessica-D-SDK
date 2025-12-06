@@ -231,7 +231,6 @@ class SynriaBessicaRobotAPI:
                     logger.info(f"  姿态误差: {ik_result['ori_err']:.6e} rad")
                     logger.info(f"  关节角度 (rad): {[f'{q:+.4f}' for q in ik_result['q']]}")
                     logger.info(f"  关节角度 (deg): {[f'{np.rad2deg(q):+.2f}' for q in ik_result['q']]}")
-                
                 # if execute:
                     q = np.rad2deg(ik_result['q'])
                     print(f"q: {q}")
