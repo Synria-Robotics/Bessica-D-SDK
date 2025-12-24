@@ -442,6 +442,114 @@ class SynriaBessicaRobotAPI:
                 'output_to_ik': [pos[0], pos[1], pos[2], quat[0], quat[1], quat[2], quat[3]],
             }
 
+    def print_state(self, arm: Optional[str] = None, continuous: bool = False, output_format: str = "rad"):
+        """Print current robot state.
+
+        :param arm: Arm to query, "left_arm", "right_arm", or "both" (default: self.default_arm)
+        :param continuous: Print continuously if True, once if False
+        :param output_format: Angle format, 'deg' or 'rad' (default: 'rad')
+        """
+        arm = arm or self.default_arm
+        
+        def _print_once(arm):
+            # Read all data first
+            joint_angles = self.get_joints(arm=arm)
+            if joint_angles is None:
+                logger.warning("无法获取关节角度")
+                return
+            
+            time.sleep(0.01)  # Small delay for data consistency
+            
+            pose = self.get_pose(arm=arm)
+            if pose is None:
+                logger.warning("无法获取末端执行器位姿")
+                # Continue without pose data
+            
+            gripper = self.get_gripper(arm=arm)
+            
+            # Format joints for printing
+            if output_format == 'deg':
+                unit = "°"
+                convert = 180.0 / np.pi
+            else:
+                unit = "rad"
+                convert = 1.0
+            
+            # Display information grouped by arm (left first, then right)
+            if arm == "both":
+                # Dual arm mode: print all left arm info, then all right arm info
+                if isinstance(joint_angles, list) and len(joint_angles) == 2:
+                    left_joints = np.array(joint_angles[0])
+                    right_joints = np.array(joint_angles[1])
+                    
+                    # Left Arm Information
+                    left_joints_out = np.round(left_joints * convert, 2 if output_format == 'deg' else 3)
+                    logger.info(f"Left Arm 关节角度（{unit}): {left_joints_out.tolist()}")
+                    
+                    if pose is not None:
+                        quaternion = pose['quaternion_xyzw']
+                        position = pose['position']
+                        if isinstance(position, list) and len(position) == 2 and \
+                           isinstance(quaternion, list) and len(quaternion) == 2:
+                            pos_left = np.array(position[0])
+                            quat_left = np.array(quaternion[0])
+                            logger.info(f"Left Arm 位置(xyz /m): {np.round(pos_left, 3).tolist()}, "
+                                      f"四元数(qx, qy, qz, qw): {np.round(quat_left, 3).tolist()}")
+                    
+                    if gripper is not None and isinstance(gripper, tuple) and len(gripper) == 2:
+                        logger.info(f"Left Arm 夹爪状态 (deg): {gripper[0]:.2f}")
+                    
+                    # Right Arm Information
+                    right_joints_out = np.round(right_joints * convert, 2 if output_format == 'deg' else 3)
+                    logger.info(f"Right Arm 关节角度（{unit}): {right_joints_out.tolist()}")
+                    
+                    if pose is not None:
+                        quaternion = pose['quaternion_xyzw']
+                        position = pose['position']
+                        if isinstance(position, list) and len(position) == 2 and \
+                           isinstance(quaternion, list) and len(quaternion) == 2:
+                            pos_right = np.array(position[1])
+                            quat_right = np.array(quaternion[1])
+                            logger.info(f"Right Arm 位置(xyz /m): {np.round(pos_right, 3).tolist()}, "
+                                      f"四元数(qx, qy, qz, qw): {np.round(quat_right, 3).tolist()}")
+                    
+                    if gripper is not None and isinstance(gripper, tuple) and len(gripper) == 2:
+                        logger.info(f"Right Arm 夹爪状态 (deg): {gripper[1]:.2f}")
+                else:
+                    logger.warning(f"Unexpected joint angles format for both arms: {type(joint_angles)}")
+            else:
+                # Single arm mode: print all information for the specified arm
+                if isinstance(joint_angles, list) and len(joint_angles) == 7:
+                    joints_out = np.round(np.array(joint_angles) * convert, 2 if output_format == 'deg' else 3)
+                    logger.info(f"{arm.upper()} 关节角度（{unit}): {joints_out.tolist()}")
+                else:
+                    logger.warning(f"Unexpected joint angles format for {arm}: {type(joint_angles)}")
+                
+                if pose is not None:
+                    quaternion = pose['quaternion_xyzw']
+                    position = pose['position']
+                    pos = np.array(position)
+                    quat = np.array(quaternion)
+                    logger.info(f"{arm.upper()} 位置(xyz /m): {np.round(pos, 3).tolist()}, "
+                              f"四元数(qx, qy, qz, qw): {np.round(quat, 3).tolist()}")
+                
+                if gripper is not None:
+                    logger.info(f"{arm.upper()} 夹爪状态 (deg): {gripper:.2f}")
+                else:
+                    logger.warning("无法获取夹爪状态")
+            
+            print("\n")
+        
+        if continuous:
+            logger.info("开始连续状态打印，按 Ctrl+C 停止")
+            try:
+                while True:
+                    _print_once(arm)
+                    time.sleep(0.03)
+            except KeyboardInterrupt:
+                logger.info("停止连续状态打印")
+        else:
+            _print_once(arm)
 
     # ==================== 系统控制 ====================
     def set_speed(self, speed_deg_s: float) -> bool:

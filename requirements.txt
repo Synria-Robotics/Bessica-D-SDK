@@ -12,5 +12,6 @@ pyyaml>=6.0
 omegaconf>=2.3.0
 mujoco>=2.3.0
 mujoco-py>=2.1.0
+cyclonedds>=0.11.0
 synria-robocore @ git+https://github.com/Synria-Robotics/RoboCore.git
 synriard @ git+https://github.com/Synria-Robotics/Synria-Robot-Descriptions.git

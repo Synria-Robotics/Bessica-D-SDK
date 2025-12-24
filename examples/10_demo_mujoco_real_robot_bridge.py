@@ -115,9 +115,8 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="MuJoCo → Real Robot Bridge Demo")
-    parser.add_argument('--port', type=str, required=True, help="串口端口 (例如: /dev/ttyUSB0 或 COM3)")
-    parser.add_argument('--baudrate', type=int, default=1000000, help="波特率 (默认: 1000000)")
-    parser.add_argument('--robot_version', type=str, default="v1_0", help="机械臂版本 (默认: v1_0)")
+    parser.add_argument('--port', type=str, default="", help="串口端口 (例如: /dev/ttyUSB0 或 COM3)")
+    parser.add_argument('--robot_version', type=str, default="v1_1", help="机械臂版本 (默认: v1_0)")
     parser.add_argument('--mode', type=str, default='independent', choices=['independent','relative','mirror'], help="交互控制模式")
     parser.add_argument('--send_interval', type=float, default=2.0, help="发送间隔（秒），默认 2.0")
     args = parser.parse_args()
@@ -134,7 +133,6 @@ def main():
     logger.info("初始化真实机器人接口…")
     robot = bessica_d_sdk.create_robot(
         port=args.port,
-        baudrate=args.baudrate,
         robot_version=args.robot_version,
         debug_mode=False
     )

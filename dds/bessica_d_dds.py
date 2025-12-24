@@ -1,15 +1,28 @@
 # Copyright (c) 2025, Unitree Robotics Co., Ltd. All Rights Reserved.
 # License: Apache License, Version 2.0  
 """
-Bessica_D robot DDS communication class.
+Bessica_D robot DDS communication class (real robot / 14‑DOF joint bridge).
 
-This node publishes a compact state message containing:
-- joint positions (14)
-- joint velocities (14)
-- pose data (21) = head / right_gripper_center / left_gripper_center poses
+This node now uses a **joint‑only** DDS interface that is suitable for
+real‑robot control as well as simulation bridges.  It:
 
-and receives command messages (format defined by the remote consumer) and
-forwards them into shared memory for Isaac Lab to consume.
+- Publishes a compact state message containing:
+  - ``joint_positions``: list[float] length 14 (7 left + 7 right)
+- Subscribes to a command message containing:
+  - ``joint_positions_cmd``: list[float] length 14 (7 left + 7 right)
+
+The exact semantics of the command are left to the consumer (e.g. direct
+position command, desired target for a controller, etc.).
+
+Internally this class still uses shared memory to communicate with the rest
+of the system (e.g. an Isaac or hardware controller process).  The shared
+memory payload is expected to be a dict with at least:
+
+    {
+        "joint_positions": [float] * 14
+    }
+
+Any extra keys are ignored for DDS publishing.
 """
 
 import json
@@ -35,12 +48,13 @@ class BessicaRobotDDS(DDSObject):
         self._initialized = True
         
         # setup the shared memory
-        # Bessica_D has 14 DOF (7 left arm + 7 right arm) and pose data for head / grippers
+        # Bessica_D has 14 DOF (7 left arm + 7 right arm)
         self.setup_shared_memory(
-            input_shm_name="isaac_bessica_d_state",  # read joint + pose state from Isaac Lab
-            output_shm_name="dds_bessica_d_cmd",     # output the command to Isaac Lab
-            input_size=4096,                         # joint_pos(14) + joint_vel(14) + pose_data(21) + margin
-            output_size=2048                         # joint command, modes, etc.
+            input_shm_name="sdk_bessica_d_state",  # read joint state from Isaac / controller
+            output_shm_name="dds_bessica_d_cmd",     # output the command to Isaac / controller
+            # Plenty of margin for small JSON payloads; we only need 14 joint values.
+            input_size=1024,
+            output_size=1024
         )
         
         print(f"[{self.node_name}] Bessica robot DDS node initialized")
@@ -72,27 +86,31 @@ class BessicaRobotDDS(DDSObject):
             return False
     
     def dds_publisher(self) -> Any:
-        """Read state from shared memory and publish as a JSON String_ message."""
+        """Read state from shared memory and publish as a JSON String_ message.
+
+        Real‑robot / 14‑DOF format:
+
+            {
+                "joint_positions": [float] * 14
+            }
+        """
         try:
             data = self.input_shm.read_data()
             if data is None:
                 return
 
+            # We are only interested in joint positions for the real‑robot interface.
             positions = data.get("joint_positions")
-            velocities = data.get("joint_velocities")
-            pose_data = data.get("imu_data")  # [21] = head / right / left gripper poses
-
-            # Build a compact JSON message
-            msg_dict: Dict[str, Any] = {}
-            if positions is not None:
-                msg_dict["joint_positions"] = positions
-            if velocities is not None:
-                msg_dict["joint_velocities"] = velocities
-            if pose_data is not None:
-                msg_dict["pose_data"] = pose_data
-
-            if not msg_dict:
+            if positions is None:
                 return
+
+            # Ensure it is JSON‑serializable
+            if hasattr(positions, "tolist"):
+                positions = positions.tolist()
+
+            msg_dict: Dict[str, Any] = {
+                "joint_positions": positions,
+            }
 
             string_msg = String_(data=json.dumps(msg_dict))
             self.publisher.Write(string_msg)
@@ -104,12 +122,13 @@ class BessicaRobotDDS(DDSObject):
     def dds_subscriber(self, msg: Any, datatype: str = None) -> Dict[str, Any]:
         """Process incoming command messages and write them into shared memory.
 
-        The expected message format is a JSON string with arbitrary keys, e.g.:
+        Expected JSON command format (real‑robot / 14‑DOF):
+
             {
-                "joint_positions_cmd": [...],
-                "joint_velocities_cmd": [...],
-                "extra": {...}
+                "joint_positions_cmd": [float] * 14
             }
+
+        Any additional keys are forwarded as‑is into shared memory.
         """
         try:
             if not hasattr(msg, "data"):
@@ -121,7 +140,7 @@ class BessicaRobotDDS(DDSObject):
                 print(f"bessica_robot_dds [{self.node_name}] Failed to parse command JSON")
                 return {}
 
-            # Forward raw command data into shared memory for Isaac Lab side.
+            # Forward raw command data into shared memory for controller side.
             self.output_shm.write_data(cmd_data)
             return cmd_data
         except Exception as e:
@@ -138,24 +157,20 @@ class BessicaRobotDDS(DDSObject):
             return self.output_shm.read_data()
         return None
     
-    def write_robot_state(self, joint_positions, joint_velocities, pose_data):
-        """Write the robot state to the shared memory
-        
+    def write_robot_state(self, joint_positions):
+        """Write the robot state (joint positions only) to shared memory.
+
         Args:
-            joint_positions: the joint position list or torch.Tensor (14 joints)
-            joint_velocities: the joint velocity list or torch.Tensor (14 joints)
-            pose_data: the pose data list or torch.Tensor (21 values)
-                      Format: [head_pos(3), head_quat(4), right_gripper_pos(3), right_gripper_quat(4), left_gripper_pos(3), left_gripper_quat(4)]
-                      Order: head, right, left
-                      Each quaternion is (w,x,y,z) format
+            joint_positions: list / numpy.ndarray / torch.Tensor of length 14
+                             (7 left arm + 7 right arm), in radians.
         """
         if self.input_shm is None:
             return
         try:
             state_data = {
-                "joint_positions": joint_positions.tolist() if hasattr(joint_positions, 'tolist') else joint_positions,
-                "joint_velocities": joint_velocities.tolist() if hasattr(joint_velocities, 'tolist') else joint_velocities,
-                "imu_data": pose_data.tolist() if hasattr(pose_data, 'tolist') else pose_data,
+                "joint_positions": joint_positions.tolist()
+                if hasattr(joint_positions, 'tolist')
+                else joint_positions,
             }
             self.input_shm.write_data(state_data)
         except Exception as e:

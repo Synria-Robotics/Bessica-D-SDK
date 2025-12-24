@@ -21,13 +21,8 @@ from .hardware import ServoDriver
 
 from robocore.modeling import RobotModel
 from robocore.kinematics import forward_kinematics, inverse_kinematics, jacobian
-# from robocore.planning import (
-# 	cubic_polynomial_trajectory,
-# 	quintic_polynomial_trajectory,
-# 	linear_joint_trajectory,
-# 	linear_cartesian_trajectory,
-# 	trapezoidal_velocity_profile
-# )
+from synriard import get_model_path
+
 
 from robocore.bridge.sim.mujoco.interactive_dual_arm import InteractiveDualArmIK  # type: ignore
 from robocore.utils.path import get_robocore_path  # type: ignore
@@ -110,27 +105,6 @@ def create_robot(
     return robot
 
 
-# ===== MuJoCo helpers (for demos) =====
-def get_mjcf_path(robot_version: str = "v1_0") -> str:
-	"""Return Bessica MuJoCo model path (if robocore_main provides path tools)."""
-	import os
-	# 1) Prefer local robocore_main resources bundled with package (stable path, includes meshes)
-	_local_mjcf = os.path.abspath(os.path.join(
-		os.path.dirname(__file__),
-		"robocore_main", "assets", "robot", "mjcf",
-		f"Bessica-D_{robot_version}", "Bessica-D_Interactive.xml"
-	))
-	if os.path.isfile(_local_mjcf):
-		return _local_mjcf
-	# 2) Fallback to robocore_main resource lookup
-	try:
-		return get_robocore_path(f"assets/robot/mjcf/Bessica-D_{robot_version}/Bessica-D_Interactive.xml")  # type: ignore
-	except Exception:
-		# 3) Last resort: clear error message, avoid pointing to incomplete MJCF in utils
-		raise FileNotFoundError(
-			f"MJCF not found: {_local_mjcf}, and robocore_main resource lookup failed. "
-			f"Please ensure robocore_main resources are included or install RoboCore_full."
-		)
 
 
 def create_mujoco_controller(robot_version: str = "v1_0"):
@@ -140,10 +114,11 @@ def create_mujoco_controller(robot_version: str = "v1_0"):
 	"""
 	if InteractiveDualArmIK is None:
 		raise RuntimeError("robocore_main not ready, cannot create InteractiveDualArmIK")
-	mjcf_path = get_mjcf_path(robot_version)
+	model_path = get_model_path("Bessica_D", version="v1_1", variant="skeleton", model_format="mjcf")
+
 	left_end = "left_arm_link7"
 	right_end = "right_arm_link7"
-	return InteractiveDualArmIK(mjcf_path, left_end, right_end)  # type: ignore
+	return InteractiveDualArmIK(model_path, left_end, right_end)  # type: ignore
 
 
 # Export MuJoCo helper symbols when available
