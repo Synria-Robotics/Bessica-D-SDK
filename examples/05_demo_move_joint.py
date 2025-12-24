@@ -33,21 +33,43 @@ def main(args):
             print("✗ Connection failed, please check serial port settings")
             return
         robot.set_speed(speed_deg_s=args.speed_deg_s)
-        # right_angles = [20, 0, 0, 0, 0, 0, 9]
-        left_angles = [20, 20, 20 ,20, 20, 20, 20]
-        right_angles = [20, 20, 20 ,20, 20, 20, 20]
-        # both_angles = [15, 25, 25, 15, 50, 25, 0]
-        # home_angles = [0.0] * 7
-        robot.set_home()
-        time.sleep(5)
-        # robot.set_joint_target(target_joints=right_angles, arm="right_arm")
-        # robot.set_joint_target(target_joints=left_angles, arm="left_arm")
-        # time.sleep(5)
-        # #robot.set_home(arm="both")
-        # robot.set_gripper_target(arm="both", command="close")
-        # 您可自行输入目标关节角度，然后控制机械臂移动到目标位置
-        # self_target=[]
-        # robot.set_joint_target(target_joints=self_target, arm=args.arm)
+
+        # Example joint targets in degrees (7 DOF per arm)
+        left_angles_deg = [20, 20, 20, 20, 20, 20, 20]
+        right_angles_deg = [20, 20, 20, 20, 20, 20, 20]
+
+        # Move to home first
+        robot.set_home(arm="both")
+        time.sleep(2)
+
+        # --- Single-arm control examples ---
+        # Move right arm only
+        robot.set_joint_target(
+            target_joints=right_angles_deg,
+            arm="right_arm",
+            joint_format="deg",
+        )
+        time.sleep(2)
+
+        # Move left arm only
+        robot.set_joint_target(
+            target_joints=left_angles_deg,
+            arm="left_arm",
+            joint_format="deg",
+        )
+        time.sleep(2)
+
+        # --- Dual-arm control example ---
+        # Both arms move simultaneously; list-of-two-lists for arm="both"
+        both_angles_deg = [left_angles_deg, right_angles_deg]
+        robot.set_joint_target(
+            target_joints=both_angles_deg,
+            arm="both",
+            joint_format="deg",
+        )
+        time.sleep(2)
+        robot.set_home(arm="both")
+        time.sleep(2)
     except Exception as e:
         print(f"✗ Error: {e}")
         import traceback

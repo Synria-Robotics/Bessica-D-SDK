@@ -100,25 +100,39 @@ class SynriaBessicaRobotAPI:
         self.servo_driver.disconnect()
 
     # ==================== 关节控制 ====================
-    def set_home(self, arm: str = "") -> bool:
+    def set_home(self, arm: str = "both") -> bool:
         """Move robot to home position.
 
-        :param arm: Arm to control, "left_arm", "right_arm", or "both" (default: self.default_arm)
+        :param arm: Arm to control, "left_arm", "right_arm", or "both"
         :return: True if successful
         """
-        arm = arm or self.default_arm
         logger.info(f"set_home at head: arm={arm}")
         home_angles = [0.0] * 7
-        if arm == "both":
-            success = self.servo_driver.move_dual_joints_deg(self.home_angles, self.home_angles,wait_for_completion=False)
-            success &= self.set_gripper_target(command="open", arm="both")
 
+        if arm == "both":
+            # Dual-arm: use unified set_joint_target, joint_format in radians
+            success = self.set_joint_target(
+                target_joints=[home_angles, home_angles],
+                arm="both",
+                joint_format="rad",
+                wait=False,
+                tolerance=0.05,
+            )
+            success &= self.set_gripper_target(command="open", arm="both")
             return success
+
         elif arm in ("left_arm", "right_arm"):
-            print(f"set_home: arm={arm}")
-            ok = self.set_joint_target(target_joints=home_angles, arm=arm, tolerance_deg=1.0)
+            # Single arm: move to home and open gripper
+            ok = self.set_joint_target(
+                target_joints=home_angles,
+                arm=arm,
+                joint_format="rad",
+                wait=False,
+                tolerance=0.05,
+            )
             ok &= self.set_gripper_target(command="open", arm=arm)
             return ok
+
         else:
             logger.error(f"set_home: 非法 arm={arm}")
             return False
@@ -127,39 +141,65 @@ class SynriaBessicaRobotAPI:
         self,
         target_joints: Union[List[float], List[List[float]]],
         arm: Optional[str] = None,
-        joint_format: str = "deg",
+        joint_format: str = "rad",
         wait: bool = False,
-        tolerance_deg: float = 3.0,
+        tolerance: float = 0.0524,
     ) -> bool:
         """Move robot to target joint angles.
 
         :param target_joints: Target joint angles. For single arm: List[float] (7 angles). For dual arm: List[List[float]] (2x7 angles)
         :param arm: Arm to control, "left_arm", "right_arm", or "both" (default: self.default_arm)
-        :param joint_format: Unit format, "deg" or "rad" (currently only "deg" supported)
+        :param joint_format: Unit format, "deg" or "rad" (default: "rad")
         :param wait: Wait for motion completion if True
-        :param tolerance_deg: Maximum allowed error per joint in degrees when waiting for completion (default: 3.0)
+        :param tolerance: Maximum allowed error per joint in same unit as joint_format (default: 0.0524 rad ≈ 3.0 deg)
         :return: True if command sent successfully
         """
         arm = arm or self.default_arm
-        if joint_format.lower() not in ("deg", "degree", "degrees"):
-            logger.error("set_joint_target 目前仅支持 joint_format='deg'")
+        is_deg = joint_format.lower() in ("deg", "degree", "degrees")
+        is_rad = joint_format.lower() in ("rad", "radian", "radians")
+        
+        if not (is_deg or is_rad):
+            logger.error(f"set_joint_target: joint_format 必须是 'deg' 或 'rad'，当前: {joint_format}")
             return False
+        
+        # Convert to radians if needed
+        convert = self.servo_driver.DEG_TO_RAD if is_deg else 1.0
+        tolerance_rad = tolerance * convert if is_deg else tolerance
+        
         if arm == "both":
-            # shape the target_joints to a list of two lists
-            target_joints_left = target_joints[0]
-            target_joints_right = target_joints[1]
-            return self.servo_driver.move_dual_joints_deg(
-                left_angles_deg=target_joints_left, 
-                right_angles_deg=target_joints_right,
-                wait_for_completion=wait,
-                tolerance_deg=tolerance_deg
+            if not isinstance(target_joints, list) or len(target_joints) != 2:
+                logger.error("set_joint_target: arm='both' 时，target_joints 必须是包含2个列表的列表")
+                return False
+            
+            target_left, target_right = target_joints[0], target_joints[1]
+            if not (isinstance(target_left, list) and len(target_left) == 7 and 
+                    isinstance(target_right, list) and len(target_right) == 7):
+                logger.error("set_joint_target: 左右臂都必须提供7个关节角度")
+                return False
+            
+            target_left_rad = [a * convert for a in target_left]
+            target_right_rad = [a * convert for a in target_right]
+            
+            success = self.servo_driver.set_joint_angles(
+                joint_angles=target_left_rad, arm="left_arm", 
+                wait_for_completion=wait, tolerance=tolerance_rad
             )
-        elif arm in ("left_arm"):
-            # logger.info(f"set_joint_target: arm={arm}, target_joints={target_joints}")
-            return self.servo_driver.move_joints_deg(arm="left_arm", angles_deg=target_joints, wait_for_completion=wait, tolerance_deg=tolerance_deg)
-        elif arm in ("right_arm"):
-            # print(f"set_joint_target: arm={arm}, target_joints={target_joints}")
-            return self.servo_driver.move_joints_deg(arm="right_arm", angles_deg=target_joints, wait_for_completion=wait, tolerance_deg=tolerance_deg)
+            success &= self.servo_driver.set_joint_angles(
+                joint_angles=target_right_rad, arm="right_arm", 
+                wait_for_completion=wait, tolerance=tolerance_rad
+            )
+            return success
+            
+        elif arm in ("left_arm", "right_arm"):
+            if not isinstance(target_joints, list) or len(target_joints) != 7:
+                logger.error(f"set_joint_target: 单臂模式必须提供7个关节角度，但得到 {len(target_joints) if isinstance(target_joints, list) else '非列表'}")
+                return False
+            
+            target_rad = [a * convert for a in target_joints]
+            return self.servo_driver.set_joint_angles(
+                joint_angles=target_rad, arm=arm, 
+                wait_for_completion=wait, tolerance=tolerance_rad
+            )
         else:
             logger.error(f"set_joint_target: 非法 arm={arm}")
             return False
@@ -204,13 +244,14 @@ class SynriaBessicaRobotAPI:
         if arm in ("left_arm", "right_arm"):
             T_target = pose_to_matrix(target_pose1)
             q0 = np.array(current_joints) if isinstance(current_joints, list) else np.array(current_joints)
-            
+            print(f"q0: {q0}")
+            print(f"T_target: {T_target}")
             # Solve IK for single arm
             ik_result = self.robot_model.ik(
-                target_left=T_target if arm == "left_arm" else None,
-                target_right=T_target if arm == "right_arm" else None,
-                q0_left=q0 if arm == "left_arm" else None,
-                q0_right=q0 if arm == "right_arm" else None,
+                target_left=T_target,
+                target_right=T_target,
+                q0_left=q0, 
+                q0_right=q0,  
                 method=method,
                 coordination='indep',
                 max_iters=max_iters,
@@ -219,11 +260,11 @@ class SynriaBessicaRobotAPI:
             )
             
             result = ik_result['res_left'] if arm == "left_arm" else ik_result['res_right']
-            q_solved = ik_result['q_left'] if arm == "left_arm" else ik_result['q_right']
             
             # Execute motion if requested
             if execute and result.get('success', False):
-                self.set_joint_target(q_solved, arm=arm, wait=False)
+                print(f"result: {result}")
+                self.set_joint_target(result['q'], arm=arm, wait=False, joint_format="rad")
             
             return result
         

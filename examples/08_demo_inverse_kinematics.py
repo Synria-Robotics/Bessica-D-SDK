@@ -106,10 +106,7 @@ def main(args):
             print(f"  {beauty_print_array(ik_result.get('q', []))}")
             beauty_print("关节角度 (角度):")
             print(f"  {beauty_print_array(np.rad2deg(ik_result.get('q', [])))}")
-            if ik_result.get('motion_executed', False):
-                beauty_print("✓ 机械臂已移动到目标位置")
-            else:
-                beauty_print("(未执行移动)")
+
         else:
             print(f"  错误信息: {ik_result.get('message', '未知错误')}")
         print("=" * 60 + "\n")

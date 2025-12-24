@@ -50,7 +50,7 @@ def main(args):
     joints_goal = robot.get_joints(arm="right_arm")
     goal_deg = [np.rad2deg(a) for a in joints_goal]
 
-    robot.set_home()
+    robot.set_home(arm="right_arm")
     # 执行轨迹
     input("按 Enter 执行轨迹...")
     

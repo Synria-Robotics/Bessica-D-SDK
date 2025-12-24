@@ -73,7 +73,8 @@ class RealRobotBridge:
         try:
             ok = self.robot.set_joint_target(
                 target_joints=[q_left_deg, q_right_deg], 
-                arm="both"
+                arm="both",
+                joint_format="deg"
             )
             if not ok:
                 logger.debug("下发关节角失败（本次跳过）")
