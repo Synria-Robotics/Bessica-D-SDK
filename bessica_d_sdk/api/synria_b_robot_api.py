@@ -20,18 +20,21 @@ import json
 import os
 import logging
 from robocore.kinematics import inverse_kinematics
-from robocore.modeling import RobotModel
-from robocore.transform import make_transform, quaternion_to_matrix
+from robocore.kinematics.bimanual import bimanual_inverse_kinematics
+from robocore.modeling.robot_model import BimanualRobotModel
+from robocore.transform import make_transform, quaternion_to_matrix, quat2mat
 from robocore.kinematics import forward_kinematics
+from robocore.kinematics.bimanual import bimanual_forward_kinematics
 from robocore.transform import matrix_to_euler, matrix_to_quaternion
-from robocore.planning.trajectory import (
-    cubic_polynomial_trajectory,
-    quintic_polynomial_trajectory,
-    linear_joint_trajectory,
-    linear_cartesian_trajectory,
-    circular_cartesian_trajectory,
-    cartesian_waypoint_trajectory
-)
+from synriard import get_model_path
+# from robocore.planning.trajectory import (
+#     cubic_polynomial_trajectory,
+#     quintic_polynomial_trajectory,
+#     linear_joint_trajectory,
+#     linear_cartesian_trajectory,
+#     circular_cartesian_trajectory,
+#     cartesian_waypoint_trajectory
+# )
 from ..utils.logger import logger
 from ..hardware import ServoDriver
 # from ..execution import HardwareExecutor, JointPlanner
@@ -48,29 +51,33 @@ class SynriaBessicaRobotAPI:
         servo_driver: ServoDriver,
         speed_deg_s: float = 20.0,
         robot_version: str = "v1_0",
+        variant: str = "skeleton",
+        left_base_link: str = 'base_link',
+        left_end_link: str = 'left_arm_link7',
+        right_base_link: str = 'base_link',
+        right_end_link: str = 'right_arm_link7',
     ):
         """Initialize robot API.
 
         :param servo_driver: Servo driver instance
         :param speed_deg_s: Default speed in degrees per second
         :param robot_version: Robot version string, e.g., "v1_0"
+        :param variant: Model variant string, e.g., "skeleton"
+        :param left_base_link: Left arm base link name
+        :param left_end_link: Left arm end-effector link name
+        :param right_base_link: Right arm base link name
+        :param right_end_link: Right arm end-effector link name
         """
         self.servo_driver = servo_driver
-        # 在 API 内部创建 RobotModel 实例
-        try:
-            from synriard import get_model_path
-            urdf_path = get_model_path("Bessica_D", version=robot_version, variant="covered")
-            self.robot_model = RobotModel(str(urdf_path))
-        except Exception as e:
-            # 本地兜底（按你项目里已有的 Alicia fallback 模式）
-            from pathlib import Path
-            # 自行根据本地路径来更改并找到bessicia的urdf文件
-            default_urdf = Path(__file__).parent.parent / "assets" / "robot" / "urdf" / f"Alicia-D_{robot_version}" / "alicia_duo_with_gripper.urdf"
-            if default_urdf.exists():
-                self.robot_model = RobotModel(str(default_urdf), end_link='tool0')
-            raise RuntimeError(f"无法创建 RobotModel，请检查 synriard 或本地 URDF。错误: {e}")
-        # self.robot_model = robot_model
-        # self.firmware_version = firmware_version
+        
+        model_path = str(get_model_path("Bessica_D", version=robot_version, variant=variant))
+
+        self.robot_model = BimanualRobotModel(model_path, left_end_link=left_end_link, right_end_link=right_end_link)
+        
+        # Access left and right arm models from bimanual model
+        self.left_model = self.robot_model.left_model
+        self.right_model = self.robot_model.right_model
+        
         self.speed_deg_s = speed_deg_s
         # self.hardware_executor = HardwareExecutor(servo_driver)
         # self.joint_planner = JointPlanner()
@@ -105,8 +112,7 @@ class SynriaBessicaRobotAPI:
         if arm == "both":
             success = self.servo_driver.move_dual_joints_deg(self.home_angles, self.home_angles,wait_for_completion=False)
             success &= self.set_gripper_target(command="open", arm="both")
-            # success = self.set_joint_target(target_joints=[home_angles,home_angles], arm="both", tolerance_deg=1.0)
-            # success &= self.set_gripper_target(command="open", arm="both")
+
             return success
         elif arm in ("left_arm", "right_arm"):
             print(f"set_home: arm={arm}")
@@ -150,223 +156,119 @@ class SynriaBessicaRobotAPI:
             )
         elif arm in ("left_arm"):
             # logger.info(f"set_joint_target: arm={arm}, target_joints={target_joints}")
-            return self.servo_driver.move_joints_deg(arm="right_arm", angles_deg=target_joints, wait_for_completion=wait, tolerance_deg=tolerance_deg)
+            return self.servo_driver.move_joints_deg(arm="left_arm", angles_deg=target_joints, wait_for_completion=wait, tolerance_deg=tolerance_deg)
         elif arm in ("right_arm"):
             # print(f"set_joint_target: arm={arm}, target_joints={target_joints}")
-            return self.servo_driver.move_joints_deg(arm="left_arm", angles_deg=target_joints, wait_for_completion=wait, tolerance_deg=tolerance_deg)
+            return self.servo_driver.move_joints_deg(arm="right_arm", angles_deg=target_joints, wait_for_completion=wait, tolerance_deg=tolerance_deg)
         else:
             logger.error(f"set_joint_target: 非法 arm={arm}")
             return False
 
     def set_pose_target(self,
-                        target_pose: List[float],
-                        target_pose_second_arm: Optional[List[float]] = None,
-                        backend: str = 'numpy',
+                        target_pose1: List[float],
+                        target_pose2: Optional[List[float]] = None,
+                        arm: Optional[str] = None,
                         method: str = 'dls',
-                        display: bool = True,
-                        tolerance: float = 1e-4,
+                        tolerance: float = 1e-3,
                         max_iters: int = 100,
-                        multi_start: int = 0,
-                        use_random_init: bool = False,
-                        arm: str = "both",
                         execute: bool = True) -> Dict:
         """Move end-effector to target pose using inverse kinematics.
 
-        :param target_pose: Target pose as [x, y, z, qx, qy, qz, qw]
-        :param target_pose_second_arm: Target pose for second arm (required when arm="both")
-        :param backend: Computation backend, 'numpy' or 'torch'
+        :param target_pose1: Target pose as [x, y, z, qx, qy, qz, qw]. For single arm: used for specified arm. For both: left arm.
+        :param target_pose2: Target pose for right arm as [x, y, z, qx, qy, qz, qw] (required when arm="both")
+        :param arm: Arm to control, "left_arm", "right_arm", or "both" (default: self.default_arm)
         :param method: IK solver method, 'dls', 'pinv', or 'transpose'
-        :param display: Display solution details
         :param tolerance: Position and orientation tolerance
         :param max_iters: Maximum number of iterations
-        :param multi_start: Number of multi-start attempts, 0 to disable
-        :param use_random_init: Use random initial guess instead of current pose
-        :param arm: Arm to control, "left_arm", "right_arm", or "both"
         :param execute: Execute motion if True
-        :return: Dictionary with success, q, iters, pos_err, ori_err, message, motion_executed
+        :return: Dictionary with success, q, iters, pos_err, ori_err, message
         """
         if not hasattr(self, 'robot_model') or self.robot_model is None:
+            return {'success': False, 'message': 'robot_model not available', 'q': None}
+        
+        arm = arm or self.default_arm
+        
+        # Get current joint positions as initial guess
+        current_joints = self.get_joints(arm=arm)
+        if current_joints is None:
+            current_joints = [0.0] * 7 if arm != "both" else [[0.0] * 7, [0.0] * 7]
+        
+        # Convert pose to transformation matrix
+        def pose_to_matrix(pose: List[float]) -> np.ndarray:
+            pos = np.array(pose[:3])
+            quat = np.array(pose[3:])
+            rot = quaternion_to_matrix(quat)
+            return make_transform(rot, pos)
+        
+        # Handle single arm case
+        if arm in ("left_arm", "right_arm"):
+            T_target = pose_to_matrix(target_pose1)
+            q0 = np.array(current_joints) if isinstance(current_joints, list) else np.array(current_joints)
+            
+            # Solve IK for single arm
+            ik_result = self.robot_model.ik(
+                target_left=T_target if arm == "left_arm" else None,
+                target_right=T_target if arm == "right_arm" else None,
+                q0_left=q0 if arm == "left_arm" else None,
+                q0_right=q0 if arm == "right_arm" else None,
+                method=method,
+                coordination='indep',
+                max_iters=max_iters,
+                pos_tol=tolerance,
+                ori_tol=tolerance,
+            )
+            
+            result = ik_result['res_left'] if arm == "left_arm" else ik_result['res_right']
+            q_solved = ik_result['q_left'] if arm == "left_arm" else ik_result['q_right']
+            
+            # Execute motion if requested
+            if execute and result.get('success', False):
+                self.set_joint_target(q_solved, arm=arm, wait=False)
+            
+            return result
+        
+        # Handle both arms case
+        elif arm == "both":
+            if target_pose2 is None:
+                return {'success': False, 'message': 'target_pose2 required for arm="both"', 'q': None}
+            
+            T_left = pose_to_matrix(target_pose1)
+            T_right = pose_to_matrix(target_pose2)
+            q0_left = np.array(current_joints[0]) if isinstance(current_joints[0], list) else np.array(current_joints[0])
+            q0_right = np.array(current_joints[1]) if isinstance(current_joints[1], list) else np.array(current_joints[1])
+            
+            # Solve IK for both arms
+            ik_result = self.robot_model.ik(
+                target_left=T_left,
+                target_right=T_right,
+                q0_left=q0_left,
+                q0_right=q0_right,
+                method=method,
+                coordination='indep',
+                max_iters=max_iters,
+                pos_tol=tolerance,
+                ori_tol=tolerance,
+            )
+            
+            # Execute motion if requested
+            if execute and ik_result.get('success_left', False) and ik_result.get('success_right', False):
+                self.set_joint_target([ik_result['q_left'], ik_result['q_right']], arm="both", wait=False)
+            
             return {
-                'success': False,
-                'message': '未提供 robot_model，无法求解 IK',
-                'q': None
+                'success': ik_result.get('success_left', False) and ik_result.get('success_right', False),
+                'success_left': ik_result.get('success_left', False),
+                'success_right': ik_result.get('success_right', False),
+                'q_left': ik_result.get('q_left'),
+                'q_right': ik_result.get('q_right'),
+                'res_left': ik_result.get('res_left'),
+                'res_right': ik_result.get('res_right'),
             }
-        if arm == "left_arm" or arm == "right_arm":
-            # 构建位姿矩阵
-            position = np.array(target_pose[:3])
-            quaternion = np.array(target_pose[3:])
-            rotation_matrix = quaternion_to_matrix(quaternion)
-            pose_matrix = make_transform(rotation_matrix, position)
-            if use_random_init:
-                q_init = self._generate_random_q(scale=0.5)
-                if display:
-                    logger.info("使用随机初始值")
-            else:
-                q_init = self.get_joints(arm=arm)
-                if q_init is None:
-                    return {
-                        'success': False,
-                        'message': '无法获取当前关节角度',
-                        'q': None
-                    }
+        
+        else:
+            return {'success': False, 'message': f'invalid arm: {arm}', 'q': None}
 
-            ik_result = inverse_kinematics(
-                self.robot_model,
-                pose_matrix,
-                q_init,
-                backend=backend,
-                method=method,
-                max_iters=max_iters,
-                pos_tol=tolerance,
-                ori_tol=tolerance,
-                multi_start=multi_start,
-                multi_noise=0.3,
-                use_analytic_jacobian=True
-            )
-            if ik_result['success']:
-                if display:
-                    logger.info("✓ IK 求解成功!")
-                    logger.info(f"  迭代次数: {ik_result['iters']}")
-                    logger.info(f"  位置误差: {ik_result['pos_err']:.6e} m")
-                    logger.info(f"  姿态误差: {ik_result['ori_err']:.6e} rad")
-                    logger.info(f"  关节角度 (rad): {[f'{q:+.4f}' for q in ik_result['q']]}")
-                    logger.info(f"  关节角度 (deg): {[f'{np.rad2deg(q):+.2f}' for q in ik_result['q']]}")
-                # if execute:
-                    q = np.rad2deg(ik_result['q'])
-                    print(f"q: {q}")
-                    success = self.set_joint_target(q.tolist(), arm=arm)
-                    ik_result['motion_executed'] = bool(success)
-                # else:
-                #     ik_result['motion_executed'] = False
-                #     if display:
-                #         logger.info("  (未执行运动，execute=False)")
-                return ik_result
-            else:
-                if display:
-                    logger.error(f"✗ IK 求解失败: {ik_result.get('message', '未知错误')}")
-                    logger.error(f"  迭代次数: {ik_result.get('iters', 'N/A')}")
-                    logger.error(f"  位置误差: {ik_result.get('pos_err', float('inf')):.6e} m")
-                    logger.error(f"  姿态误差: {ik_result.get('ori_err', float('inf')):.6e} rad")
-                return ik_result
-        if arm == "both":
-            position_l = np.array(target_pose[:3])
-            quaternion_l = np.array(target_pose[3:])
-            rotation_matrix_l = quaternion_to_matrix(quaternion_l)
-            pose_matrix_l = make_transform(rotation_matrix_l, position_l)
-            position_r = np.array(target_pose_second_arm[:3])
-            quaternion_r = np.array(target_pose_second_arm[3:])
-            rotation_matrix_r = quaternion_to_matrix(quaternion_r)
-            pose_matrix_r = make_transform(rotation_matrix_r, position_r)
-            # Get initial guess
-            if use_random_init:
-                # Generate random initial guess within joint limits
-                q_init_l = self._generate_random_q(scale=0.5)
-                q_init_r = self._generate_random_q(scale=0.5)
-                if display:
-                    logger.info("使用随机初始值")
-            else:
-                q_init_l = self.get_joints(arm="left_arm")
-                q_init_r = self.get_joints(arm="right_arm")
-                if q_init_l is None or q_init_r is None:
-                    return {
-                        'success': False,
-                        'message': '无法获取当前关节角度',
-                        'ql': None,
-                        'qr': None
-                    }
 
-            if display:
-                logger.info(f"左臂初始关节角度 (rad): {[f'{q:+.4f}' for q in q_init_l]}")
-                logger.info(f"左臂初始关节角度 (deg): {[f'{np.rad2deg(q):+.2f}' for q in q_init_l]}")
-                logger.info(f"右臂初始关节角度 (rad): {[f'{q:+.4f}' for q in q_init_r]}")
-                logger.info(f"右臂初始关节角度 (deg): {[f'{np.rad2deg(q):+.2f}' for q in q_init_r]}")
-                logger.info(f"正在求解IK (方法: {method}, 最大迭代: {max_iters})...")
-            ik_result_l = inverse_kinematics(
-                self.robot_model,
-                pose_matrix_l,
-                q_init_l,
-                backend=backend,
-                method=method,
-                max_iters=max_iters,
-                pos_tol=tolerance,
-                ori_tol=tolerance,
-                multi_start=multi_start,
-                multi_noise=0.3,
-                use_analytic_jacobian=True
-            )
-            ik_result_r = inverse_kinematics(
-                self.robot_model,
-                pose_matrix_r,
-                q_init_r,
-                backend=backend,
-                method=method,
-                max_iters=max_iters,
-                pos_tol=tolerance,
-                ori_tol=tolerance,
-                multi_start=multi_start,
-                multi_noise=0.3,
-                use_analytic_jacobian=True
-            )
-            if ik_result_l.get('success') and ik_result_r.get('success'):
-                if display:
-                    logger.info("✓ IK 求解成功!")
-                    logger.info(f"  左臂迭代次数: {ik_result_l.get('iters')}")
-                    logger.info(f"  左臂位置误差: {ik_result_l.get('pos_err', 0.0):.6e} m")
-                    logger.info(f"  左臂姿态误差: {ik_result_l.get('ori_err', 0.0):.6e} rad")
-                    logger.info(f"  左关节角度 (rad): {[f'{q:+.4f}' for q in ik_result_l['q']]}")
-                    logger.info(f"  左关节角度 (deg): {[f'{np.rad2deg(q):+.2f}' for q in ik_result_l['q']]}")
-                    logger.info(f"  右臂迭代次数: {ik_result_r.get('iters')}")
-                    logger.info(f"  右臂位置误差: {ik_result_r.get('pos_err', 0.0):.6e} m")
-                    logger.info(f"  右臂姿态误差: {ik_result_r.get('ori_err', 0.0):.6e} rad")
-                    logger.info(f"  右关节角度 (rad): {[f'{q:+.4f}' for q in ik_result_r['q']]}")
-                    logger.info(f"  右关节角度 (deg): {[f'{np.rad2deg(q):+.2f}' for q in ik_result_r['q']]}")
-                # if execute:
-                    q_l = np.rad2deg(ik_result_l['q'])
-                    q_r = np.rad2deg(ik_result_r['q'])
-                    q = [q_l.tolist(), q_r.tolist()]
-                    ok = self.set_joint_target(target_joints=q, arm="both")
-                    ik_result_l['motion_executed'] = bool(ok)
-                    ik_result_r['motion_executed'] = bool(ok)
-                # else:
-                #     ik_result_l['motion_executed'] = False
-                #     ik_result_r['motion_executed'] = False
-                #     if display:
-                #         logger.info("  (未执行运动，execute=False)")
-                return ik_result_l, ik_result_r
-            else:
-                if display:
-                    logger.error(f"✗ IK 求解失败: {ik_result.get('message', '未知错误')}")
-                    logger.error(f"  迭代次数: {ik_result.get('iters', 'N/A')}")
-                    logger.error(f"  位置误差: {ik_result.get('pos_err', float('inf')):.6e} m")
-                    logger.error(f"  姿态误差: {ik_result.get('ori_err', float('inf')):.6e} rad")
-                return ik_result
 
-    # 插值接口（显式）
-    # def set_joint_target_interpolation(
-    #     self,
-    #     target_joints: List[float],
-    #     arm: Optional[str] = None,
-    #     joint_format: str = "rad",
-    #     speed_factor: float = 1.0,
-    #     T_default: float = 4.0,
-    #     n_steps_ref: int = 200,
-    # ) -> bool:
-    #     arm = arm or self.default_arm
-    #     _validate_joint_list(target_joints, expected_len=7)
-    #     if joint_format.lower() == 'deg':
-    #         target_joints = [a * np.pi / 180.0 for a in target_joints]
-    #     target_joints, _ = _check_and_clip_joint_limits(target_joints, self.robot_model)
-    #     steps, delay = _compute_steps_and_delay(speed_factor=speed_factor, T_default=T_default, n_steps_ref=n_steps_ref)
-    #     cur = self.get_joints(arm=arm)
-    #     if not isinstance(cur, list) or len(cur) != 7:
-    #         return self.servo_driver.set_joint_angles(target_joints, arm=arm, wait_for_completion=True)
-    #     for s in range(1, steps + 1):
-    #         r = s / steps
-    #         interp = [c + (t - c) * r for c, t in zip(cur, target_joints)]
-    #         if not self.servo_driver.set_joint_angles(interp, arm=arm, wait_for_completion=False):
-    #             return False
-    #         time.sleep(delay)
-    #     return True
 
     # ==================== 夹爪控制 ====================
     def set_gripper_target(
@@ -416,13 +318,12 @@ class SynriaBessicaRobotAPI:
         """Get current joint angles.
 
         :param arm: Arm to query, "left_arm", "right_arm", or "both" (default: self.default_arm)
-        :return: Joint angles in degrees. For single arm: List[float] (7 angles). For dual arm: List[List[float]] (2x7 angles). None if unavailable
+        :return: Joint angles in radians. For single arm: List[float] (7 angles). For dual arm: List[List[float]] (2x7 angles). None if unavailable
         """
         self.default_arm = "both"
         arm = arm or self.default_arm
         joint_angles = self.servo_driver.read_joint_angles(arm)
         # logger.info(f"{arm}'s joint_angles: {joint_angles}")
-
         return joint_angles
 
     def get_gripper(self, arm: Optional[str] = None) -> Optional[Union[float, Tuple[float, float]]]:
@@ -450,78 +351,56 @@ class SynriaBessicaRobotAPI:
         if arm == "both":
             joints_l = self.get_joints(arm="left_arm")
             joints_r = self.get_joints(arm="right_arm")
-            joints = [joints_l, joints_r]
-            T_fk_l = forward_kinematics(self.robot_model, joints_l, backend='numpy', return_end=True)
-            position_l = T_fk_l[:3, 3]
-            rotation_l = T_fk_l[:3, :3]
-            euler_l = matrix_to_euler(rotation_l, seq='xyz')
-            quat_l = matrix_to_quaternion(rotation_l)
-            output_to_ik_l = [position_l[0], position_l[1], position_l[2], quat_l[0], quat_l[1], quat_l[2], quat_l[3]]
-            T_fk_r = forward_kinematics(self.robot_model, joints_r, backend='numpy', return_end=True)
-            position_r = T_fk_r[:3, 3]
-            rotation_r = T_fk_r[:3, :3]
-            euler_r = matrix_to_euler(rotation_r, seq='xyz')
-            quat_r = matrix_to_quaternion(rotation_r)
-            output_to_ik_r = [position_r[0], position_r[1], position_r[2], quat_r[0], quat_r[1], quat_r[2], quat_r[3]]
+            if not joints_l or not joints_r or not isinstance(joints_l, list) or not isinstance(joints_r, list):
+                logger.error("无法获取关节角度")
+                return None
+            # Joint angles are already in radians from get_joints()
+            result = bimanual_forward_kinematics(
+                self.left_model, self.right_model,
+                np.array(joints_l), np.array(joints_r),
+                return_end=True, mode='indep'
+            )
+            
+            T_l, T_r = result['left'], result['right']
+            pos_l, pos_r = T_l[:3, 3], T_r[:3, 3]
+            rot_l, rot_r = T_l[:3, :3], T_r[:3, :3]
+            euler_l, euler_r = matrix_to_euler(rot_l, seq='xyz'), matrix_to_euler(rot_r, seq='xyz')
+            quat_l, quat_r = matrix_to_quaternion(rot_l), matrix_to_quaternion(rot_r)
+            
             return {
-                'transform': [T_fk_l, T_fk_r],
-                'position': [position_l, position_r],
-                'rotation': [rotation_l, rotation_r],
+                'transform': [T_l, T_r],
+                'position': [pos_l, pos_r],
+                'rotation': [rot_l, rot_r],
                 'euler_xyz': [euler_l, euler_r],
                 'quaternion_xyzw': [quat_l, quat_r],
-                'output_to_ik': [output_to_ik_l, output_to_ik_r],
+                'output_to_ik': [
+                    [pos_l[0], pos_l[1], pos_l[2], quat_l[0], quat_l[1], quat_l[2], quat_l[3]],
+                    [pos_r[0], pos_r[1], pos_r[2], quat_r[0], quat_r[1], quat_r[2], quat_r[3]]
+                ],
             }
-        elif arm == "left_arm" or arm == "right_arm":
+        else:
             joints = self.get_joints(arm=arm)
             if not joints or not isinstance(joints, list):
                 logger.error("无法获取关节角度")
                 return None
-            T_fk = forward_kinematics(self.robot_model, joints, backend='numpy', return_end=True)
-            position = T_fk[:3, 3]
-            rotation = T_fk[:3, :3]
-            euler = matrix_to_euler(rotation, seq='xyz')
-            quat = matrix_to_quaternion(rotation)
-            output_to_ik = [position[0], position[1], position[2], quat[0], quat[1], quat[2], quat[3]]
+            
+            model = self.left_model if arm == "left_arm" else self.right_model
+            # Joint angles are already in radians from get_joints()
+            T_fk = forward_kinematics(model, np.array(joints), return_end=True)
+            pos = T_fk[:3, 3]
+            rot = T_fk[:3, :3]
+            euler = matrix_to_euler(rot, seq='xyz')
+            quat = matrix_to_quaternion(rot)
+            
             return {
                 'transform': T_fk,
-                'position': position,
-                'rotation': rotation,
+                'position': pos,
+                'rotation': rot,
                 'euler_xyz': euler,
                 'quaternion_xyzw': quat,
-                'output_to_ik': output_to_ik,
+                'output_to_ik': [pos[0], pos[1], pos[2], quat[0], quat[1], quat[2], quat[3]],
             }
 
-    # def get_firmware_version(self, timeout: float = 5.0, send_interval: float = 0.2) -> Optional[str]:
-    #     # 优先读缓存
-    #     cache_path = os.path.join(os.path.dirname(__file__), "firmware_version.json")
-    #     if os.path.exists(cache_path):
-    #         try:
-    #             with open(cache_path, "r") as f:
-    #                 ver = json.load(f).get("firmware_version")
-    #                 if ver:
-    #                     self.firmware_version = ver
-    #                     return ver
-    #         except Exception:
-    #             pass
-    #     # 主动查询（依赖 ServoDriver 的解析）
-    #     start = time.time()
-    #     cmd = [0xAA, 0x0A, 0x01, 0x00, 0x00, 0xFF]
-    #     while time.time() - start < timeout:
-    #         try:
-    #             self.servo_driver.serial_comm.send_data(cmd)
-    #             time.sleep(0.1)
-    #             ver = self.servo_driver.get_firmware_version()
-    #             if ver and ver != "未知版本":
-    #                 try:
-    #                     with open(cache_path, "w") as f:
-    #                         json.dump({"firmware_version": ver}, f)
-    #                 except Exception:
-    #                     pass
-    #                 return ver
-    #         except Exception as e:
-    #             logger.error(f"读取固件版本异常: {e}")
-    #         time.sleep(send_interval)
-    #     return None
 
     # ==================== 系统控制 ====================
     def set_speed(self, speed_deg_s: float) -> bool:
@@ -532,9 +411,7 @@ class SynriaBessicaRobotAPI:
         """
         return self.servo_driver.set_speed_deg_s(speed_deg_s)
 
-    # def set_speed_factor(self, speed_factor: float) -> bool:
-    #     """按系数设置速度：factor=1.0 → 原始值约 1000。"""
-    #     return self.servo_driver.set_speed_factor(speed_factor)
+
     def torque_control(self, command: str, arm: str = 'both') -> bool:
         """Enable or disable torque control.
 
@@ -1002,22 +879,3 @@ class SynriaBessicaRobotAPI:
 
         return q
 
-    # # ==================== 打印/辅助 ====================
-    # def print_state(self, arm: str = 'both', output_format: str = 'deg'):
-    #     def _print_once():
-    #         joints = self.get_joints(arm=arm)
-    #         grip = self.get_gripper(arm=arm)
-    #         if joints is None:
-    #             logger.warning("无法获取关节状态")
-    #             return
-    #         if arm == 'both':
-    #             if output_format == 'deg':
-    #                 left = [a * 180.0 / np.pi for a in joints[0]]
-    #                 right = [a * 180.0 / np.pi for a in joints[1]]
-    #             else:
-    #                 left, right = joints
-    #             logger.info(f"左臂: {[round(a, 2) for a in left]} | 右臂: {[round(a, 2) for a in right]} | 夹爪: {grip}")
-    #         else:
-    #             arr = [a * 180.0 / np.pi for a in joints] if output_format == 'deg' else joints
-    #             logger.info(f"{arm}: {[round(a, 2) for a in arr]} | 夹爪: {grip}")
-    #     _print_once()

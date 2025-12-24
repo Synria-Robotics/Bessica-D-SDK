@@ -1,4 +1,5 @@
 import serial
+import platform
 import serial.tools.list_ports
 import time
 from ..utils.logger import logger
@@ -61,62 +62,56 @@ class SerialComm:
         """
         try:
             # 查找可用串口
-            # 若用户明确指定端口，优先直接尝试使用该端口
-            port = ""
-            if self.port_name:
-                # 允许传入 "ttyACM0" 或完整路径 "/dev/ttyACM0"
-                candidate = self.port_name
-                if not candidate.startswith("/dev/"):
-                    candidate = f"/dev/{candidate}"
-                port = candidate if os.path.exists(candidate) else ""
-                if not port:
-                    # 回退到自动搜索（兼容不同系统命名）
-                    port = self.find_serial_port()
-            else:
-                port = self.find_serial_port()
-            
+            port = self.find_serial_port()
+
             # 没有找到可用串口
             if not port:
                 logger.warning("未找到可用串口")
                 return False
-            
+
             logger.info(f"正在连接端口: {port}")
-            
+
             # 关闭已有连接
             if self.serial_port and self.serial_port.is_open:
                 self.serial_port.close()
-            
-            # 检查串口是否是cu.usbserial，该串口通常为macOS
-            if 'cu.usbserial' in port:
 
-                # 检查波特率是否为macOS所能识别的
-                if self.baudrate == self.baudrate_default:
-                    self.baudrate = self.baudrate_macOS # 更改为macOS能识别的波特率1000000
-                    logger.info(f"将波特率从默认 {self.baudrate_default} 调整为macOS所能识别的 {self.baudrate_macOS}")
+            if '/dev/tty.' in port:
+                cu_candidate = port.replace('/dev/tty.', '/dev/cu.')
+                if os.path.exists(cu_candidate) and os.access(cu_candidate, os.R_OK | os.W_OK):
+                    port = cu_candidate
 
-                # 如果有指定波特率则不做更改，只log出来
-                else:
-                    logger.info(f"当前指定波特率为 {self.baudrate}, 该波特率macOS可能不能识别")
-
-            # 设置串口参数
+            # Serial parameters: add write timeout and disable flow control
+            self.serial_port = serial.Serial(
+                port=port,
+                baudrate=self.baudrate,
+                timeout=self.timeout,
+                write_timeout=self.timeout,
+                xonxoff=False,
+                rtscts=False,
+                dsrdtr=False
+            )
             try:
-                self.serial_port = serial.Serial(
-                    port=port,
-                    baudrate=self.baudrate,
-                    timeout=self.timeout
-                )
-            except Exception as e:
-                # 常见为权限错误：OSError: [Errno 13] Permission denied: '/dev/ttyACM0'
-                logger.error(f"打开串口失败: {e}")
-                logger.error("请检查权限：将当前用户加入 dialout 组后重新登录，或临时执行 'sudo chmod 666 {port}' 测试")
-                return False
-            
+                # Ensure buffers and handshake lines are in a sane state
+                self.serial_port.reset_input_buffer()
+                self.serial_port.reset_output_buffer()
+                try:
+                    # Keep DTR asserted; some controllers ignore TX when DTR is low
+                    self.serial_port.setDTR(True)
+                except Exception:
+                    pass
+                try:
+                    self.serial_port.setRTS(False)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
             if self.serial_port.is_open:
                 logger.info("串口连接成功")
                 return True
-            
+
             return False
-            
+
         except Exception as e:
             logger.error(f"连接串口异常: {str(e)}")
             return False
@@ -134,54 +129,66 @@ class SerialComm:
         Returns:
             str: 可用串口的路径，未找到则返回空字符串
         """
-        # 记录当前时间，避免过频繁打印日志
-        current_time = time.time()
-        should_log = (current_time - self.last_log_time) >= 5.0  # 每5秒允许打印一次日志
+        # 如果指定了端口，优先使用
+        if self.port_name:
+            device = self._normalize_port_name(self.port_name)
+            if self._is_port_accessible(device):
+                return device
         
-        # 获取串口列表
+        # 获取所有可用端口
         try:
             ports = list(serial.tools.list_ports.comports())
-        except Exception as e:
-            if should_log:
-                logger.error(f"列出端口时异常: {str(e)}")
-                self.last_log_time = current_time
+        except Exception:
             return ""
         
-        # 如果有端口且应该打印日志
-        if ports and should_log:
-            port_names = [port.device for port in ports]
-            logger.info(f"找到 {len(ports)} 个串口设备: {' '.join(port_names)}")
-            self.last_log_time = current_time
-        
-        # 如果没有端口
         if not ports:
             return ""
         
-        # 首先尝试使用指定的端口（放宽检查：不以权限过滤）
-        if self.port_name:
+        # 按平台优先级查找
+        priorities = self._get_port_priorities()
+        for prefix in priorities:
             for port in ports:
-                device_path = port.device
-                if self.port_name in (device_path, os.path.basename(device_path)) or self.port_name in device_path:
-                    if should_log:
-                        logger.info(f"使用指定的端口: {device_path}")
-                    return device_path
-            
-            if should_log:
-                logger.warning(f"指定的端口 {self.port_name} 不可用，将搜索其他设备")
+                if prefix in port.device:
+                    device = self._normalize_port_name(port.device)
+                    if self._is_port_accessible(device):
+                        return device
         
-        # 尝试找到可用的设备
-        preferred_prefixes = ("ttyACM", "ttyUSB", "cu.usbserial", "COM")
-        for port in ports:
-            device_path = port.device
-            if any(prefix in device_path for prefix in preferred_prefixes):
-                # 放宽：不再以 os.access 作为硬阻塞条件，实际可用性由后续 open 测试
-                if should_log:
-                    logger.info(f"找到可用设备: {device_path}")
-                return device_path
-
-        if should_log:
-            logger.warning("未找到可用的 ttyACM/ttyUSB/cu.usbserial/COM 设备")
+        # macOS: 尝试将 tty.* 映射到 cu.*
+        if platform.system() == "Darwin":
+            for port in ports:
+                if port.device.startswith('/dev/tty.'):
+                    cu_port = port.device.replace('/dev/tty.', '/dev/cu.')
+                    if self._is_port_accessible(cu_port):
+                        return cu_port
+        
         return ""
+    
+    def _normalize_port_name(self, port_name: str) -> str:
+        """标准化端口名称（Windows COM端口处理）"""
+        if platform.system() == "Windows" and port_name.startswith("COM"):
+            try:
+                port_num = int(port_name[3:])
+                if port_num > 9 and not port_name.startswith("\\\\.\\"):
+                    return f"\\\\.\\{port_name}"
+            except ValueError:
+                pass
+        return port_name
+    
+    def _is_port_accessible(self, port_name: str) -> bool:
+        """检查端口是否可访问"""
+        if platform.system() == "Windows" and port_name.startswith(("COM", "\\\\.\\COM")):
+            return True
+        return os.path.exists(port_name) and os.access(port_name, os.R_OK | os.W_OK)
+    
+    def _get_port_priorities(self) -> List[str]:
+        """根据平台返回端口优先级列表"""
+        system = platform.system()
+        if system == "Darwin":  # macOS
+            return ["cu.wchusbserial", "cu.SLAB_USBtoUART", "cu.usbserial", "cu.usbmodem", "ttyUSB", "COM"]
+        elif system == "Linux":  # Linux
+            return ["ttyUSB", "ttyACM", "ttyCH343USB", "cu.wchusbserial", "cu.SLAB_USBtoUART", "cu.usbserial", "cu.usbmodem", "COM"]
+        else:  # Windows
+            return ["COM", "ttyUSB", "cu.usbserial", "cu.usbmodem"]
     
     def send_data(self, data: List[int]) -> bool:
         """

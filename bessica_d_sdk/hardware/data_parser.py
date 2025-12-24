@@ -52,8 +52,8 @@ class DataParser:
                               "right_arm": JointState([0.0]*7, 0.0, 0.0)}
         self._lock = lock
         self.direction_map = {
-            "left_arm":  [1, 1, 1, 1, 1, 1, 1],
-            "right_arm": [1, 1, 1, 1, 1, 1, 1]
+            "left_arm":  [1, -1, 1, -1, 1, 1, -1],
+            "right_arm": [1, 1, 1, -1, 1, 1, 1]
         }
         # 块顺序配置 (仅用于关节 2*14 字节部分)。
         # 新协议: 前14字节=右臂, 后14字节=左臂, 最后4字节=右夹爪2+左夹爪2
@@ -191,6 +191,10 @@ class DataParser:
             arm1, arm2 = self.block_order  # 新协议默认 (right_arm, left_arm)
             a1_raw = decode(block1)
             a2_raw = decode(block2)
+            # print("left arm:", arm2, a2_raw)
+            # print("right arm:", arm1, a1_raw)
+            # a1_map = a1_raw
+            # a2_map = a2_raw
             a1_map = [a * self.direction_map[arm1][i] for i, a in enumerate(a1_raw)]
             a2_map = [a * self.direction_map[arm2][i] for i, a in enumerate(a2_raw)]
             self._update_joint_state(arm1, a1_map, 0.0)
@@ -214,6 +218,7 @@ class DataParser:
                     # 更新（保持之前已写入的角度）
                     self._update_joint_state(arm1, self._joint_states[arm1].angles, right_grip if arm1 == 'right_arm' else left_grip)
                     self._update_joint_state(arm2, self._joint_states[arm2].angles, left_grip if arm2 == 'left_arm' else right_grip)
+                    # print("left joint angles: ", self._joint_states['left_arm'].angles)
                 except Exception as e:
                     if self.debug_mode:
                         logger.warning(f"夹爪解析失败: {e}")

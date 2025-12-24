@@ -66,22 +66,11 @@ class ServoDriver:
         self.joint_count = 7
         
         self.count = 0
-        self.joint_to_servo_map = [
-            (0, 1.0),    # 关节1 -> 舵机1 (正向)
-            (1, 1.0),    # 关节2 -> 舵机3 (正向)
-            (1, -1.0),   # 关节2 -> 舵机4 (反向)
-            (2, 1.0),    # 关节3 -> 舵机5 (正向)
-            (3, 1.0),    # 关节4 -> 舵机6 (正向)
-            (3, -1.0),   # 关节4 -> 舵机7 (反向)
-            (4, 1.0),    # 关节5 -> 舵机8 (正向)
-            (5, 1.0),    # 关节6 -> 舵机9 (正向)
-            (6, 1.0),    # 关节7 -> 舵机10 (正向)
-        ]
 
-        # 方向因子：正方向与右臂一致，若左臂需要反向则为 -1
+
         self.direction_map = {
-            "left_arm":  [1, 1, 1, 1, 1, 1, 1],
-            "right_arm": [1, 1, 1, 1, 1, 1, 1]
+            "left_arm":  [1, -1, 1, -1, 1, 1, -1],
+            "right_arm": [1, 1, 1, -1, 1, 1, 1]
         }
 
         # 状态更新线程相关
@@ -238,40 +227,6 @@ class ServoDriver:
         self._thread_running = False
         logger.info("状态更新线程结束")
 
-    # def read_joint_angles(self, arm: str = 'both') -> Optional[Union[List[float], List[List[float]]]]:
-    #     """
-    #     读取机械臂的关节角度（单位：弧度）
-
-    #     Args:
-    #         arm (str, optional): 指定读取的机械臂名称，可选值为 "left_arm" 或 "right_arm"。
-    #                             如果未指定（默认为 None），则同时返回左右两个机械臂的角度。
-
-    #     Returns:
-    #         Optional[Union[List[float], List[List[float]]]]:
-    #             - 若指定 arm，则返回一个长度为 7 的一维列表：shape = (7,)
-    #             - 若 arm 为 both，则返回一个包含两个一维列表的二维列表：shape = (2, 7)，
-    #             结构为 [left_arm_angles, right_arm_angles]
-    #             - 若读取失败，则返回 None。
-    #     """
-    #     joint_states = self.data_parser.get_joint_state()
-
-    #     if arm == 'both':
-    #         # 确保返回顺序固定 [left, right]
-    #         return [joint_states['left_arm'].angles,
-    #                 joint_states['right_arm'].angles]
-    #     else:
-    #         return joint_states[arm].angles
-
-    #     def set_joint_angles_dual_arm(self, left_angles: List[float], right_angles: List[float]) -> bool:
-    #         """
-    #         设置双臂关节角度
-    #         """
-    #         return self.set_joint_angles(left_angles, arm="left_arm") and self.set_joint_angles(right_angles, arm="right_arm")
-    #     def set_joint_angles_single_arm(self, angles: List[float], arm: str) -> bool:
-    #         """
-    #         设置单臂关节角度
-    #         """
-    #         return self.set_joint_angles(angles, arm=arm)
 
 
     def set_block_order(self, order: Tuple[str, str]):
@@ -375,26 +330,10 @@ class ServoDriver:
                 logger.error(f"{arm}：关节角度数量必须为 {self.joint_count}")
                 return False
 
-            mapped_angles = [angle * self.direction_map[arm][i] for i, angle in enumerate(joint_angles)]
-
-            frame = self._build_joint_frame(mapped_angles, arm=arm)
+            frame = self._build_joint_frame(joint_angles, arm=arm)
+            # frame_hex = " ".join([f"{byte:02X}" for byte in frame])
+            # print(f"frame_hex: {frame_hex}")
             result = self.serial_comm.send_data(frame)
-
-            # if gripper_angle is not None:
-            #     result &= self.set_gripper(gripper_angle, arm=arm)
-
-            if wait_for_completion and result:
-                # 等待运动完成（仅在需要时使用，实时同步场景应使用 wait_for_completion=False）
-                start_time = time.time()
-                while time.time() - start_time < timeout:
-                    angles_now = self.data_parser.get_joint_state(arm).angles
-                    if all(abs(angles_now[i] - mapped_angles[i]) <= tolerance for i in range(self.joint_count)):
-                        break
-                    time.sleep(0.01)
-
-                if time.time() - start_time >= timeout:
-                    # logger.warning(f"等待目标位置超时")
-                    return False
 
             return result
 
@@ -428,6 +367,8 @@ class ServoDriver:
         frame = self._build_gripper_frame(angle_rad, arm=arm)
         
         # 发送夹爪控制命令
+        # frame_hex = " ".join([f"{byte:02X}" for byte in frame])
+        # print("frame gripper: ", frame_hex)
         result = self.serial_comm.send_data(frame)
         
         if not wait_for_completion or not result:
@@ -625,8 +566,8 @@ class ServoDriver:
         if len(joint_angles) != 7:
             logger.error(f"关节角数量应为7，当前: {len(joint_angles)}")
             return []
-        # IDENT 约定: 0x01 = LEFT_ARM(left_arm), 0x02 = RIGHT_ARM(right_arm)
-        ident = 0x01 if arm == 'left_arm' else 0x02
+        # IDENT 约定: 0x02 = LEFT_ARM(left_arm), 0x01 = RIGHT_ARM(right_arm)
+        ident = 0x02 if arm == 'left_arm' else 0x01
         # 方向映射
         mapped = [joint_angles[i] * self.direction_map[arm][i] for i in range(7)]
         # 转换为硬件值
