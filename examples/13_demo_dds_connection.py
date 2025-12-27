@@ -56,9 +56,10 @@ def main(args):
     Connect to the real robot and continuously publish its joint state
     (14‑DOF) to `rt/bessica_d/state` as JSON.
     """
-    # Initialize DDS factory (domain id 1 by default, can be adjusted if needed)
-    logger.info("[DDS Demo 13] Initializing DDS factory...")
-    ChannelFactoryInitialize(1)
+    # Initialize DDS factory (domain id 0 for real robot, 1 for simulation)
+    # For real robot, use channel 0 to match teleop_hand_and_arm_sdk.py
+    logger.info(f"[DDS Demo 13] Initializing DDS factory (domain_id={args.domain_id})...")
+    ChannelFactoryInitialize(args.domain_id)
 
     # Create DDS publisher (state) and prepare subscriber (commands)
     logger.info("[DDS Demo 13] Creating state publisher on rt/bessica_d/state ...")
@@ -187,6 +188,7 @@ if __name__ == "__main__":
     parser.add_argument("--robot_version", type=str, default="v1_0", help="机械臂版本 (默认: v1_0)")
     parser.add_argument("--speed_deg_s", type=float, default=40.0, help="关节运动速度 (度/秒, 默认: 40.0)")
     parser.add_argument("--publish_hz", type=float, default=50.0, help="DDS 发布频率 (Hz, 默认: 50.0)")
+    parser.add_argument("--domain_id", type=int, default=0, help="DDS domain ID (0 for real robot, 1 for simulation, 默认: 0)")
     parser.add_argument("--verbose", action="store_true", help="打印已发布的关节状态")
 
     cmd_args = parser.parse_args()
