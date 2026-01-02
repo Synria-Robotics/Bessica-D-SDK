@@ -124,18 +124,18 @@ if __name__ == '__main__':
                         choices=['numpy', 'torch'],
                         help='计算后端 (默认: numpy)')
     parser.add_argument('--arm', type=str, default='both',
-                        choices=['left_arm', 'right_arm', 'both'],
+                        choices=['left', 'right', 'both'],
                         help='要查询的机械臂 (默认: both)')
     parser.add_argument('--variant', type=str, default='skeleton',
                         help='模型变体 (默认: skeleton)')
     parser.add_argument('--left-base-link', type=str, default='base_link',
                         help='左臂基座链接名称 (默认: base_link)')
-    parser.add_argument('--left-end-link', type=str, default='left_arm_link7',
+    parser.add_argument('--left-end-link', type=str, default='left_link7',
     # parser.add_argument('--left-end-link', type=str, default='left_tool0',
                         help='左臂末端执行器链接名称 (默认: left_tool0)')
     parser.add_argument('--right-base-link', type=str, default='base_link',
                         help='右臂基座链接名称 (默认: base_link)')
-    parser.add_argument('--right-end-link', type=str, default='right_arm_link7',
+    parser.add_argument('--right-end-link', type=str, default='right_link7',
     # parser.add_argument('--right-end-link', type=str, default='right_tool0',
                         help='右臂末端执行器链接名称 (默认: right_tool0)')
     args = parser.parse_args()

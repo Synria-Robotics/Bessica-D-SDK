@@ -15,8 +15,8 @@ DDS command interface (real‑robot / 14‑DOF):
     }
 
 Joint ordering:
-- First 7 values:  left_arm joints
-- Next 7 values:   right_arm joints
+- First 7 values:  left joints
+- Next 7 values:   right joints
 """
 
 import argparse

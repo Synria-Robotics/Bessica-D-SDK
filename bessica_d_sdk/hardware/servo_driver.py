@@ -5,7 +5,7 @@ import threading
 from typing import List, Optional, Union, Tuple, Dict
 import numpy as np
 import traceback
-from ..utils.logger import logger
+from ..utils.logger import logger, hex_print
 from .serial_comm import SerialComm
 from .data_parser import DataParser, JointState, JointStateDict
 
@@ -18,11 +18,18 @@ class ServoDriver:
     RAD_TO_DEG = 180.0 / math.pi  # 弧度转角度系数
     DEG_TO_RAD = math.pi / 180.0  # 角度转弧度系数
 
+    # Command IDs
+    CMD_JOINT = 0x06       # Arm joint angle feedback and control
+
+    # Gripper type configuration
+    GRI_MAX_50MM = 3290
+    GRI_MAX_100MM = 3590
+
 
     # 帧常量
     FRAME_HEADER = 0xAA
     FRAME_FOOTER = 0xFF
-    FRAME_MINIMAL_SIZE = 5
+    FRAME_MINIMAL_SIZE = 6
     ARM_DATA_SIZE = 21
     GRIPPER_FRAME_SIZE = 8
 
@@ -31,17 +38,47 @@ class ServoDriver:
     CMD_GRIPPER = 0x02     # 夹爪控制与行程反馈
     CMD_ZERO_POS = 0x03    # 机械臂以当前位置为零点  
     CMD_DUAL_ARM = 0x06   # 双臂角度反馈与控制
-    CMD_TORQUE = 0x13      # 机械臂力矩控制
+    CMD_TORQUE = 0x05      # 机械臂力矩控制 (协议: 0x05)
     CMD_GIMBAL = 0x14      # 云台角度控制 (X/Y)
+    
+    # 功能码 (Function codes)
+    FUNC_TORQUE_BOTH = 0x00    # 双臂力矩控制
+    FUNC_TORQUE_RIGHT = 0x01   # 右臂力矩控制
+    FUNC_TORQUE_LEFT = 0x02    # 左臂力矩控制
+    FUNC_ZERO_BOTH = 0x00      # 双臂零点设置
+    FUNC_ZERO_RIGHT = 0x01     # 右臂零点设置
+    FUNC_ZERO_LEFT = 0x02      # 左臂零点设置
+    FUNC_JOINT_BOTH = 0x03     # 双臂关节控制
+    FUNC_JOINT_RIGHT = 0x04    # 右臂关节控制
+    FUNC_JOINT_LEFT = 0x05     # 左臂关节控制
 
     # 识别帧
     PRESENT_POSITION = 0x38 #当前机械臂关节角度识别帧
     # PRESENT_SPEED = 0x41    #当前机械臂关节速度识别 （待开发）
 
-    LEFT_ARM = 0X02
-    RIGHT_ARM = 0X01
+    left = 0X02
+    right = 0X01
     BOTH_ARM = 0x03
 
+
+    # Raw instruction mapping table for information retrieval and control
+    # Note: torque_on/torque_off are handled dynamically via _build_torque_frame() to support arm selection
+    # Note: joint_gripper, temperature, velocity are handled dynamically via _build_joint_gripper_frame()
+    INFO_COMMAND_MAP: Dict[str, List[int]] = {
+        # Get firmware version
+        "version": [0xAA, 0x01, 0x00, 0x01, 0xFE, 0x23, 0xFF],
+        # Set current position as zero
+        "zero_cali": [0xAA, 0x03, 0x00, 0x01, 0xFE, 0xA8, 0xFF],
+        # Joint information acquisition (position and status) - built dynamically
+        # "joint_gripper": built via _build_joint_gripper_frame(0x00)
+        # Temperature information acquisition - built dynamically
+        # "temperature": built via _build_joint_gripper_frame(0x01)
+        # Velocity information acquisition - built dynamically
+        # "velocity": built via _build_joint_gripper_frame(0x02)
+        "self_check": [0xAA, 0xFE, 0x00, 0x00, 0xFE, 0x93, 0xFF],
+        # Gripper type acquisition
+        "gripper_type": [0xAA, 0x04, 0x0E, 0x01, 0xFE, 0x1B, 0xFF],
+    }
 
     def __init__(self, port: str = "", baudrate: int = 1000000, debug_mode: bool = False, poll_mode: bool = True):
         """
@@ -54,11 +91,10 @@ class ServoDriver:
             poll_mode: True 表示响应式协议，需要主动发送请求帧获取当前关节状态
         """
         self.debug_mode = debug_mode
-        self.poll_mode = poll_mode  # 新增: 是否主动轮询请求状态
         self._lock = threading.Lock()
 
         # 创建串口通信模块和数据解析器
-        self.serial_comm = SerialComm(lock=self._lock, port=port, baudrate=baudrate, debug_mode=debug_mode)
+        self.serial_comm = SerialComm(lock=self._lock, port=port, debug_mode=debug_mode)
         self.data_parser = DataParser(lock=self._lock, debug_mode=debug_mode)
         
         # 舵机数量
@@ -69,8 +105,8 @@ class ServoDriver:
 
 
         self.direction_map = {
-            "left_arm":  [1, -1, 1, -1, 1, 1, -1],
-            "right_arm": [1, 1, 1, -1, 1, 1, 1]
+            "left":  [1, -1, 1, -1, 1, 1, -1],
+            "right": [1, 1, 1, -1, 1, 1, 1]
         }
 
         # 状态更新线程相关
@@ -79,37 +115,9 @@ class ServoDriver:
         self._stop_thread = threading.Event()
         self._thread_running = False
         
-        logger.info("初始化机械臂控制模块")
-        logger.info(f"调试模式: {'启用' if debug_mode else '禁用'}")
+
 
         self.disconnect()
-
-    def wait_for_valid_state(self, arm: str = "both", timeout: float = 5.0) -> bool:
-        """
-        等待指定机械臂的状态变为有效（不为全零）
-
-        Args:
-            arm (str): "left_arm"、"right_arm" 或 "both"
-            timeout (float): 最大等待时间（秒）
-
-        Returns:
-            bool: 如果在超时时间内收到有效状态，返回 True；否则返回 False
-        """
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            js = self.read_joint_state(arm)
-            if arm == "both":
-                left_ok = js["left_arm"] and max(abs(a) for a in js["left_arm"].angles) > 1e-3
-                right_ok = js["right_arm"] and max(abs(a) for a in js["right_arm"].angles) > 1e-3
-                if left_ok and right_ok:
-                    return True
-            else:
-                if js and max(abs(a) for a in js.angles) > 1e-3:
-                    return True
-            time.sleep(0.05)
-        print(f"[超时] 未收到 {arm} 有效关节状态")
-        return False
-
 
     def __del__(self):
         """析构函数，确保线程和连接在对象销毁时被正确清理"""
@@ -133,7 +141,6 @@ class ServoDriver:
         if result:
             # 连接成功后启动状态更新线程
             self.start_update_thread()
-            self.wait_for_valid_state(arm='both')
         return result
     
     def disconnect(self):
@@ -145,7 +152,6 @@ class ServoDriver:
     def start_update_thread(self):
         """启动状态更新线程"""
         if self._update_thread is not None and self._thread_running:
-            logger.info("状态更新线程已经在运行")
             return
         
         # 重置停止信号
@@ -157,7 +163,6 @@ class ServoDriver:
         self._update_thread.start()
 
         
-        logger.info("状态更新线程已启动")
     
     def stop_update_thread(self):
         """停止状态更新线程"""
@@ -173,7 +178,6 @@ class ServoDriver:
             self._update_thread.join(timeout=2.0)
         
         self._update_thread = None
-        logger.info("状态更新线程已停止")
     
     def is_update_thread_running(self) -> bool:
         """
@@ -210,13 +214,10 @@ class ServoDriver:
 
     def _update_loop(self):
         """状态更新线程主循环 (支持响应式轮询)"""
-        logger.info("状态更新线程开始运行")
         while not self._stop_thread.is_set():
             time.sleep(self.read_interval)
             try:
-                if self.poll_mode:
-                    # 主动请求关节状态
-                    self._send_joint_state_request('both')
+
                 with self._lock:
                     frame = self.serial_comm.read_frame()
                 if frame and frame != 9999999:
@@ -225,20 +226,19 @@ class ServoDriver:
                 logger.error(f"状态线程异常：{e}")
                 break
         self._thread_running = False
-        logger.info("状态更新线程结束")
 
 
 
     def set_block_order(self, order: Tuple[str, str]):
         """设置底层解析器双臂数据块顺序。
-        默认固件顺序可能为 ("right_arm","left_arm")，如果拖拽示教出现左右互换，可调用：
-            controller.set_block_order(("left_arm","right_arm"))
+        默认固件顺序可能为 ("right","left")，如果拖拽示教出现左右互换，可调用：
+            controller.set_block_order(("left","right"))
         """
         if not isinstance(order, tuple) or len(order) != 2:
             logger.error(f"block_order 必须是长度为2的元组, 当前: {order}")
             return False
-        if set(order) != {"left_arm","right_arm"}:
-            logger.error(f"block_order 只允许包含 left_arm / right_arm, 当前: {order}")
+        if set(order) != {"left","right"}:
+            logger.error(f"block_order 只允许包含 left / right, 当前: {order}")
             return False
         try:
             self.data_parser.block_order = order
@@ -249,12 +249,92 @@ class ServoDriver:
             return False
 
 
+    def acquire_info(self, info_type: str, wait: bool = False, timeout: float = 2.0, 
+                     retry_interval: float = 0.2, arm: str = 'both') -> bool:
+        """
+        General information acquisition interface, selecting different commands by type.
+
+        :param info_type: Type of information to acquire (version, zero_cali, torque_on, torque_off, joint, etc.)
+        :param wait: If True, wait for the response to be received and parsed
+        :param timeout: Maximum time to wait in seconds (only used if wait=True)
+        :param retry_interval: Time interval between retry attempts in seconds (default 0.2s)
+        :param arm: Arm selection for torque commands ('left', 'right', 'both'). Default: 'both'
+        :return: True if successful
+        """
+        # Handle torque commands dynamically (support arm selection)
+        if info_type in ('torque_on', 'torque_off'):
+            enable = (info_type == 'torque_on')
+            if arm not in ['left', 'right', 'both']:
+                logger.error(f"无效的arm参数: {arm}")
+                return False
+            
+            func_map = {
+                'both': self.FUNC_TORQUE_BOTH,
+                'right': self.FUNC_TORQUE_RIGHT,
+                'left': self.FUNC_TORQUE_LEFT
+            }
+            func_code = func_map[arm]
+            data_value = 0x01 if enable else 0x00
+            command = self._build_torque_frame(func_code, data_value)
+        # Handle joint_gripper, temperature, velocity commands dynamically
+        elif info_type in ('joint_gripper', 'temperature', 'velocity'):
+            func_code_map = {
+                'joint_gripper': 0x00,
+                'temperature': 0x01,
+                'velocity': 0x02
+            }
+            func_code = func_code_map[info_type]
+            command = self._build_joint_gripper_frame(func_code)
+        elif info_type not in self.INFO_COMMAND_MAP:
+            raise ValueError(f"Unsupported info type: {info_type}")
+        else:
+            command = self.INFO_COMMAND_MAP[info_type]
+
+        # Clear the corresponding event before sending request (if applicable)
+        if info_type in self.data_parser._info_event_map:
+            event = self.data_parser._info_event_map[info_type]
+            event.clear()
+
+        # If not waiting, just send once
+        if not wait:
+            success = self.serial_comm.send_data(command)
+            return success
+
+        # If waiting and has an event, implement retry logic
+        if info_type in self.data_parser._info_event_map:
+            event = self.data_parser._info_event_map[info_type]
+            start_time = time.time()
+
+            while time.time() - start_time < timeout:
+                # Send command
+                success = self.serial_comm.send_data(command)
+                if not success:
+                    logger.warning(f"Failed to send {info_type} command, retrying...")
+                    time.sleep(retry_interval)
+                    continue
+
+                # Wait for response with a short timeout (retry_interval)
+                remaining_time = timeout - (time.time() - start_time)
+                wait_time = min(retry_interval, remaining_time)
+
+                if event.wait(wait_time):
+                    # Successfully received response
+                    return True
+
+            # Timeout exceeded
+            logger.warning(f"Failed to get {info_type} within timeout period after multiple retries")
+            return False
+        else:
+            # For commands without events, just send once
+            success = self.serial_comm.send_data(command)
+            return success
+
     def read_gripper_data(self, arm: str = 'both') -> Union[float, Tuple[float, float]]:
         """
         读取机械臂夹爪的当前角度（单位：弧度）
 
         Args:
-            arm (str, optional): 指定要读取的机械臂，可选值为 "left_arm" 或 "right_arm"。
+            arm (str, optional): 指定要读取的机械臂，可选值为 "left" 或 "right"。
                                 若为 both，则同时返回左右两个机械臂的夹爪角度。
 
         Returns:
@@ -265,8 +345,8 @@ class ServoDriver:
         joint_states = self.data_parser.get_joint_state(arm)
 
         if arm == 'both':
-            return (joint_states['left_arm'].gripper,
-                    joint_states['right_arm'].gripper)
+            return (joint_states['left'].gripper,
+                    joint_states['right'].gripper)
             
         else:
             return joint_states.gripper
@@ -281,7 +361,7 @@ class ServoDriver:
             Optional[Union[JointState, JointStateDict]]:
                 - 若指定 arm，则返回一个 JointState 对象。
                 - 若未指定 arm，则返回一个包含两个 JointState 对象的元组：shape = (2, 7)，
-                结构为 [left_arm_joint_state, right_arm_joint_state]
+                结构为 [left_joint_state, right_joint_state]
                 - 若读取失败，则返回 None。
         """
         return self.data_parser.get_joint_state(arm)
@@ -289,16 +369,16 @@ class ServoDriver:
     def read_joint_angles(self,arm: str = '') -> Optional[Union[JointState, JointStateDict]]:
         """
         """
-        if arm in ["left_arm", "right_arm"]:
+        if arm in ["left", "right"]:
             return self.data_parser.get_joint_state(arm).angles
         if arm == "both":
-            return [self.data_parser.get_joint_state(arm="left_arm").angles,
-                    self.data_parser.get_joint_state(arm="right_arm").angles]
+            return [self.data_parser.get_joint_state(arm="left").angles,
+                    self.data_parser.get_joint_state(arm="right").angles]
         return None
 
 
     def set_joint_angles(self,
-                        joint_angles: List[float],
+                        joint_angles: Union[List[float], List[List[float]]],
                         arm: str = None,
                         gripper_angle: float = None,
                         wait_for_completion: bool = True,
@@ -308,12 +388,13 @@ class ServoDriver:
         设置机械臂关节角度（单位：弧度）
 
         支持：
-        - 指定 arm：控制单个机械臂（传入一个 [float] 列表）
+        - 单臂：joint_angles 为 List[float] (7个角度), arm 为 "left" 或 "right"
+        - 双臂：joint_angles 为 List[List[float]] (2x7角度), arm 为 "both"
 
         Args:
-            joint_angles: 单臂：长度为 7 的列表
-            arm: "left_arm" 或 "right_arm"
-            gripper_angle:单臂夹爪控制；
+            joint_angles: 单臂：长度为 7 的列表；双臂：长度为 2 的列表，每个元素为 7 个角度
+            arm: "left", "right", 或 "both"
+            gripper_angle: 单臂夹爪控制（暂未实现）
             wait_for_completion: 是否等待运动完成
             timeout: 最大等待时间
             tolerance: 每个关节允许的最大误差（弧度）
@@ -325,16 +406,26 @@ class ServoDriver:
             logger.error(f"请输入想要控制的机械臂，当前arm = {arm}")
             return False
         
+        # 判断是单臂还是双臂
+        is_dual = isinstance(joint_angles, list) and len(joint_angles) == 2 and isinstance(joint_angles[0], list)
+        
+        if is_dual:
+            if arm != 'both':
+                logger.error(f"双臂模式时arm必须为'both'，当前: {arm}")
+                return False
         else:
+            if arm not in ['left', 'right']:
+                logger.error(f"单臂模式时arm必须为'left'或'right'，当前: {arm}")
+                return False
             if not isinstance(joint_angles, list) or len(joint_angles) != self.joint_count:
-                logger.error(f"{arm}：关节角度数量必须为 {self.joint_count}")
+                logger.error(f"{arm}：关节角度数量必须为 {self.joint_count}，当前: {len(joint_angles) if isinstance(joint_angles, list) else '非列表'}")
                 return False
 
-            frame = self._build_joint_frame(joint_angles, arm=arm)
-            # frame_hex = " ".join([f"{byte:02X}" for byte in frame])
-            # print(f"frame_hex: {frame_hex}")
-            result = self.serial_comm.send_data(frame)
-            return result
+        frame = self._build_joint_frame(joint_angles, arm=arm)
+        if not frame:
+            return False
+        result = self.serial_comm.send_data(frame)
+        return result
 
     
     def set_gripper(self, 
@@ -349,7 +440,7 @@ class ServoDriver:
         Args:
             angle_rad: 单臂夹爪角度（用于指定 arm）
             arm: 
-                - "left_arm" or "right_arm": 控制指定机械臂夹爪
+                - "left" or "right": 控制指定机械臂夹爪
             wait_for_completion: 是否等待夹爪运动完成
             timeout: 超时时间（秒）
             tolerance: 误差容忍范围（弧度）
@@ -453,143 +544,165 @@ class ServoDriver:
         Returns:
             bool: 命令是否成功发送
         """
-        if not isinstance(arm, str) or arm not in ['left_arm', 'right_arm', 'both']:
+        if not isinstance(arm, str) or arm not in ['left', 'right', 'both']:
                 logger.error(f"请检查需要取消扭矩的arm名称，当前为{arm}")
                 return False
 
-        
-        if arm == 'left_arm':
-            data = self.LEFT_ARM
-            arm_info = '左臂'
-        elif arm == 'right_arm':
-            data = self.RIGHT_ARM
-            arm_info = '右臂'
-        elif arm == 'both':
-            data = self.BOTH_ARM
-            arm_info = '双臂'
+
         # 构造零点设置帧
-        frame = self._build_command_frame(self.CMD_ZERO_POS, arm=arm, data=[data])
+        zero_map = {
+            'both': 0x00,
+            'right': 0x01,
+            'left': 0x02
+        }
+        data = zero_map[arm]
+        frame = self._build_zero_calibration_frame(self.CMD_ZERO_POS, arm=arm, data=[data])
        
         # 发送零点设置命令
         result = self.serial_comm.send_data(frame)
-        time.sleep(1)  #延时等待指令生效
 
-        if result:
-            logger.info(f"{arm_info}归零成功")
         return result
     
-    def enable_torque(self, arm:str) -> bool:
-        """
-        使能力矩控制（使机械臂保持当前位置）
-        
-        Returns:
-            bool: 命令是否成功发送
-        """
-        if not isinstance(arm, str) or arm not in ['left_arm', 'right_arm', 'both']:
-                logger.error(f"请检查需要取消扭矩的arm名称，当前为{arm}")
-                return False
-        
-        data = [0] * 2
-        data[1] = 0x01
-        if arm == 'left_arm':
-            data[0] = self.LEFT_ARM
-            arm_info = '左臂'
-        elif arm == 'right_arm':
-            data[0] = self.RIGHT_ARM
-            arm_info = '右臂'
-        elif arm == 'both':
-            data[0] = self.BOTH_ARM
-            arm_info = '双臂'
-
-        # 构造力矩使能帧
-        frame = self._build_command_frame(self.CMD_TORQUE, arm=arm, data=data)
-        
-        # 发送力矩使能命令
-        result = self.serial_comm.send_data(frame)
-        time.sleep(1)
-
-        if result:
-            logger.info(f"{arm_info}扭矩已经开启")
-        return result
+    def enable_torque(self, arm: str) -> bool:
+        """使能力矩控制（使机械臂保持当前位置）"""
+        return self._set_torque(arm, enable=True)
     
-    def disable_torque(self, arm:str) -> bool:
+    def disable_torque(self, arm: str) -> bool:
+        """禁用力矩控制（使机械臂可以自由移动）"""
+        return self._set_torque(arm, enable=False)
+    
+    def _set_torque(self, arm: str, enable: bool) -> bool:
         """
-        禁用力矩控制（使机械臂可以自由移动）
+        统一力矩控制方法
         
-        Returns:
-            bool: 命令是否成功发送
+        Args:
+            arm: 'left', 'right', or 'both'
+            enable: True to enable, False to disable
         """
-        if not isinstance(arm, str) or arm not in ['left_arm', 'right_arm', 'both']:
-                logger.error(f"请检查需要取消扭矩的arm名称，当前为{arm}")
-                return False
+        if arm not in ['left', 'right', 'both']:
+            logger.error(f"无效的arm参数: {arm}")
+            return False
         
-        data = [0] * 2
-        data[1] = 0x00
-        if arm == 'left_arm':
-            data[0] = self.LEFT_ARM
-            arm_info = '左臂'
-        elif arm == 'right_arm':
-            data[0] = self.RIGHT_ARM
-            arm_info = '右臂'
-        elif arm == 'both':
-            data[0] = self.BOTH_ARM
-            arm_info = '双臂'
-
-        # 构造力矩禁用帧
-        frame = self._build_command_frame(cmd_id=self.CMD_TORQUE, arm=arm, data=data)
+        # 映射arm到功能码
+        func_map = {
+            'both': self.FUNC_TORQUE_BOTH,
+            'right': self.FUNC_TORQUE_RIGHT,
+            'left': self.FUNC_TORQUE_LEFT
+        }
+        func_code = func_map[arm]
+        data_value = 0x01 if enable else 0x00
         
-        # 发送力矩禁用命令
+        # 构建帧: AA 05 FUNC_CODE 01 DATA CHECK FF
+        frame = self._build_torque_frame(func_code, data_value)
         result = self.serial_comm.send_data(frame)
         time.sleep(1)
-
+        
         if result:
-            logger.info(f"{arm_info}扭矩已经关闭")
+            arm_names = {'both': '双臂', 'right': '右臂', 'left': '左臂'}
+            status = '开启' if enable else '关闭'
+            logger.info(f"{arm_names[arm]}扭矩已经{status}")
         return result
     
     
     def _build_joint_frame(self, 
-                       joint_angles: List[float],
+                       joint_angles: Union[List[float], List[List[float]]],
                        arm: str = None) -> List[int]:
-        """构建单臂关节控制帧 (新协议)
-        协议: AA 06 LEN IDENT DATA(7*2B) CHECK FF
-          IDENT: 0x01 右臂 / 0x02 左臂
-          LEN = 1(IDENT) + 14(DATA) = 0x0F
-          DATA: 7个关节，每关节 2 字节 little-endian (value 0-4095)
-          CHECK = (IDENT + sum(DATA字节)) % 2
-        joint_angles: 目标关节角（弧度）长度=7
-        arm: 'left_arm' / 'right_arm'
         """
-        if arm not in ['left_arm','right_arm']:
-            logger.error(f"关节控制需指定单臂(left_arm/right_arm)，当前: {arm}")
-            return []
-        if len(joint_angles) != 7:
-            logger.error(f"关节角数量应为7，当前: {len(joint_angles)}")
-            return []
-        # IDENT 约定: 0x02 = LEFT_ARM(left_arm), 0x01 = RIGHT_ARM(right_arm)
-        ident = 0x02 if arm == 'left_arm' else 0x01
-        # 方向映射
-        mapped = [joint_angles[i] * self.direction_map[arm][i] for i in range(7)]
-        # 转换为硬件值
-        data_bytes: List[int] = []
-        for ang in mapped:
+        构建关节控制帧 (支持单臂/双臂)
+        协议: AA 06 FUNC_CODE LEN DATA CHECK FF
+          FUNC_CODE: 0x03(双臂), 0x04(右臂), 0x05(左臂)
+          DATA: 关节角度数据 (每关节2字节 little-endian)
+        """
+        # 确定是单臂还是双臂
+        is_dual = isinstance(joint_angles, list) and len(joint_angles) == 2 and isinstance(joint_angles[0], list)
+        
+        if is_dual:
+            if arm != 'both':
+                logger.error("双臂模式时arm必须为'both'")
+                return []
+            if len(joint_angles[0]) != 7 or len(joint_angles[1]) != 7:
+                logger.error("双臂模式需要左右各7个关节角度")
+                return []
+            func_code = self.FUNC_JOINT_BOTH
+            # 处理双臂数据: 右臂 + 左臂
+            right_angles = [joint_angles[0][i] * self.direction_map['right'][i] for i in range(7)]
+            left_angles = [joint_angles[1][i] * self.direction_map['left'][i] for i in range(7)]
+            data_bytes = self._angles_to_bytes(right_angles) + self._angles_to_bytes(left_angles)
+        else:
+            if arm not in ['left', 'right']:
+                logger.error(f"单臂模式需指定arm(left/right)，当前: {arm}")
+                return []
+            if len(joint_angles) != 7:
+                logger.error(f"关节角数量应为7，当前: {len(joint_angles)}")
+                return []
+            func_code = self.FUNC_JOINT_RIGHT if arm == 'right' else self.FUNC_JOINT_LEFT
+            mapped = [joint_angles[i] * self.direction_map[arm][i] for i in range(7)]
+            data_bytes = self._angles_to_bytes(mapped)
+        
+        # 构建帧: AA 06 FUNC_CODE LEN DATA CHECK FF
+        length = len(data_bytes)
+        frame = [0] * (length + 6)  # 头 + 指令 + 功能码 + 长度 + 数据 + 校验 + 尾
+        frame[0] = self.FRAME_HEADER
+        frame[1] = self.CMD_DUAL_ARM
+        frame[2] = func_code
+        frame[3] = length
+        for i, b in enumerate(data_bytes):
+            frame[4 + i] = b
+        frame[-1] = self.FRAME_FOOTER
+        # 校验: 使用CRC-32计算 Cmd + Func + Len + Data (frame[1:-2])
+        frame[-2] = self.serial_comm.calculate_checksum(frame[1:-2])
+        
+        if self.debug_mode:
+            if is_dual:
+                logger.debug(f"构建双臂关节帧 angles(deg)={[[round(a * self.RAD_TO_DEG, 1) for a in angles] for angles in joint_angles]}")
+            else:
+                logger.debug(f"构建关节帧 {arm} angles(deg)={[round(a * self.RAD_TO_DEG, 1) for a in joint_angles]}")
+        return frame
+    
+    def _angles_to_bytes(self, angles: List[float]) -> List[int]:
+        """将角度列表转换为字节数组 (每角度2字节 little-endian)"""
+        data_bytes = []
+        for ang in angles:
             v = self._rad_to_hardware_value(ang)
             data_bytes.append(v & 0xFF)
             data_bytes.append((v >> 8) & 0xFF)
-        length = 1 + len(data_bytes)  # IDENT + DATA
-        frame = [0] * (length + 5)  # 头 指令 长度 IDENT+DATA 校验 尾
+        return data_bytes
+    
+    def _build_torque_frame(self, func_code: int, data_value: int) -> List[int]:
+        """
+        构建力矩控制帧
+        协议: AA 05 FUNC_CODE 01 DATA CHECK FF
+        校验: 使用CRC-32计算，取最后8位 (计算范围: Cmd + Func + Len + Data)
+        """
+        frame = [0] * 7  # 固定长度: 头 + 指令 + 功能码 + 长度 + 数据 + 校验 + 尾
         frame[0] = self.FRAME_HEADER
-        frame[1] = self.CMD_DUAL_ARM
-        frame[2] = length
-        frame[3] = ident
-        # 写入 DATA
-        for i, b in enumerate(data_bytes):
-            frame[4 + i] = b
-        # 计算校验
-        checksum = (ident + sum(data_bytes)) % 2
-        frame[-2] = checksum
+        frame[1] = self.CMD_TORQUE
+        frame[2] = func_code
+        frame[3] = 0x01  # 数据长度
+        frame[4] = data_value
         frame[-1] = self.FRAME_FOOTER
-        if self.debug_mode:
-            logger.debug(f"构建关节帧 {arm} angles(deg)={[round(a * self.RAD_TO_DEG, 1) for a in joint_angles]}")
+        # 校验: 使用CRC-32计算 Cmd + Func + Len + Data (frame[1:-2])
+        frame[-2] = self.serial_comm.calculate_checksum(frame[1:-2])
+        return frame
+
+    def _build_joint_gripper_frame(self, func_code: int = 0x00) -> List[int]:
+        """
+        构建关节及夹爪数据获取帧
+        协议: AA 06 FUNC_CODE 01 0xFE CHECK FF
+        校验: 使用CRC-32计算，取最后8位 (计算范围: Cmd + Func + Len + Data)
+        
+        Args:
+            func_code: 功能码 (0x00: 关节夹爪数据, 0x01: 温度, 0x02: 速度)
+        """
+        frame = [0] * 7  # 固定长度: 头 + 指令 + 功能码 + 长度 + 数据 + 校验 + 尾
+        frame[0] = self.FRAME_HEADER
+        frame[1] = self.CMD_JOINT
+        frame[2] = func_code
+        frame[3] = 0x01  # 数据长度
+        frame[4] = 0xFE  # 数据
+        frame[-1] = self.FRAME_FOOTER
+        # 校验: 使用CRC-32计算 Cmd + Func + Len + Data (frame[1:-2])
+        frame[-2] = self.serial_comm.calculate_checksum(frame[1:-2])
         return frame
 
 
@@ -606,7 +719,7 @@ class ServoDriver:
                 - tuple: 双臂夹爪角度 (left_rad, right_rad)
             arm: 
                 - None: 双臂控制
-                - "left_arm" 或 "right_arm"
+                - "left" 或 "right"
 
         Returns:
             List[int]: 控制帧字节列表
@@ -618,11 +731,11 @@ class ServoDriver:
         frame[2] = self.GRIPPER_FRAME_SIZE - 5  # 数据长度
         frame[-1] = self.FRAME_FOOTER
 
-        if arm == 'left_arm':
-            frame[3] = self.LEFT_ARM
+        if arm == 'left':
+            frame[3] = self.left
     
-        elif arm == 'right_arm':
-            frame[3] = self.RIGHT_ARM
+        elif arm == 'right':
+            frame[3] = self.right
         
         # 转换为硬件值
         gripper_value = self._rad_to_hardware_value_grip(angle_rad)
@@ -632,8 +745,8 @@ class ServoDriver:
         frame[offset] = gripper_value & 0xFF  # 低字节
         frame[offset+1] = (gripper_value >> 8) & 0xFF  # 高字节
         
-        # 计算并设置校验和
-        frame[-2] = self._calculate_checksum(frame)
+        # 计算并设置校验和 (使用CRC-32)
+        frame[-2] = self.serial_comm.calculate_checksum(frame[1:-2])
         
         
         if self.debug_mode:
@@ -644,10 +757,11 @@ class ServoDriver:
     
     def _build_command_frame(self, cmd_id: int, arm: str, data: List[int]) -> List[int]:
         """
-        构建命令帧
+        构建命令帧 (保留用于向后兼容，如zero_position等)
         
         Args:
             cmd_id: 命令ID
+            arm: 臂标识 (用于某些需要arm信息的命令)
             data: 数据字节列表
             
         Returns:
@@ -670,11 +784,31 @@ class ServoDriver:
         # 设置帧尾
         frame[-1] = self.FRAME_FOOTER
         
-        # 计算并设置校验和
-        frame[-2] = self._calculate_checksum(frame)
+        # 计算并设置校验和 (使用CRC-32)
+        frame[-2] = self.serial_comm.calculate_checksum(frame[1:-2])
             
         return frame
     
+
+    def _build_zero_calibration_frame(self, cmd_id: int, arm: str, data: List[int]) -> List[int]:
+        """
+        Building zero calibration frame
+        Frame structure: [Header, CmdID, FunctionCode, DataLength, Data, Checksum, Footer]
+        """
+        # Frame size: Header(1) + CmdID(1) + FunctionCode(1) + DataLength(1) + Data(1) + Checksum(1) + Footer(1) = 7
+        frame = [0] * 7
+        frame[0] = self.FRAME_HEADER
+        frame[1] = cmd_id
+        frame[2] = data[0]  # Function code (0x00 for both, 0x01 for right, 0x02 for left)
+        frame[3] = 0x01     # Data length
+        frame[4] = 0xFE     # Data
+
+        # 计算并设置校验和 (使用CRC-32)
+        frame[-2] = self.serial_comm.calculate_checksum(frame[1:-2])
+        frame[-1] = self.FRAME_FOOTER
+        return frame
+    
+
     def _rad_to_hardware_value(self, angle_rad: float) -> int:
         """
         将弧度转换为硬件值(0-4095)
@@ -727,23 +861,7 @@ class ServoDriver:
         # 范围限制
         return max(2048, min(servo_value, value))
     
-    def _calculate_checksum(self, frame: List[int]) -> int:
-        """
-        计算校验和
-        
-        Args:
-            frame: 完整的数据帧
-            
-        Returns:
-            int: 校验和
-        """
-        # 计算从第3个字节到倒数第3个字节的所有元素之和
-        checksum = 0
-        for i in range(3, len(frame) - 2):
-            checksum += frame[i]
-        
-        # 对2取模
-        return checksum % 2
+
 
     def _build_gimbal_frame(self, x_angle_rad: float, y_angle_rad: float) -> List[int]:
         """
@@ -767,7 +885,8 @@ class ServoDriver:
         frame[6] = (y_val >> 8) & 0xFF
         # 帧尾与校验
         frame[-1] = self.FRAME_FOOTER
-        frame[-2] = self._calculate_checksum(frame)
+        # 校验: 使用CRC-32计算 Cmd + Len + Data (frame[1:-2])
+        frame[-2] = self.serial_comm.calculate_checksum(frame[1:-2])
         if self.debug_mode:
             logger.debug(f"构建云台帧 X={x_angle_rad*self.RAD_TO_DEG:.1f}°, Y={y_angle_rad*self.RAD_TO_DEG:.1f}° -> x={x_val}, y={y_val}")
         return frame
@@ -793,7 +912,8 @@ class ServoDriver:
         frame[4] = speed & 0xFF
         frame[5] = (speed >> 8) & 0xFF
         frame[-1] = self.FRAME_FOOTER
-        frame[-2] = self._calculate_checksum(frame)
+        # 校验: 使用CRC-32计算 Cmd + Func + Len + Data (frame[1:-2])
+        frame[-2] = self.serial_comm.calculate_checksum(frame[1:-2])
         return frame
 
     def set_speed_raw(self, speed_value: int) -> bool:
@@ -812,26 +932,19 @@ class ServoDriver:
         raw = int(max(1, min(3400, (rad_s / max_angle_rad_per_sec) * 3400.0)))
         return self.set_speed_raw(raw)
 
-    def set_speed_factor(self, speed_factor: float) -> bool:
-        """按系数设置速度，对齐 Alicia：factor∈[0,1] → raw = clip(factor * 3400)。"""
-        try:
-            f = float(speed_factor)
-        except Exception:
-            return False
-        raw = int(max(0.0, min(3400.0, f * 3400.0)))
-        return self.set_speed_raw(raw)
+
 
 
     def set_gripper_deg(self, arm: str, angle_deg: float, wait: bool = False) -> bool:
         """设置夹爪角度（度制）。"""
-        if arm not in ["left_arm", "right_arm" , "both"]:
+        if arm not in ["left", "right" , "both"]:
             logger.error(f"set_gripper_deg: arm 参数无效: {arm}")
             return False
         angle_rad = angle_deg * self.DEG_TO_RAD
-        if arm in ["left_arm", "right_arm"]:
+        if arm in ["left", "right"]:
             return self.set_gripper(angle_rad, arm=arm, wait_for_completion=wait)
         elif arm == "both":
-            return self.set_gripper(angle_rad, arm="left_arm", wait_for_completion=wait) and self.set_gripper(angle_rad, arm="right_arm", wait_for_completion=wait)
+            return self.set_gripper(angle_rad, arm="left", wait_for_completion=wait) and self.set_gripper(angle_rad, arm="right", wait_for_completion=wait)
         else:
             logger.error(f"set_gripper_deg: arm 参数无效: {arm}")
             return False
@@ -863,7 +976,7 @@ class ServoDriver:
             print(f"右夹爪角度: {right_deg}")
         else:
             angle_deg = round(gripper_angles * self.RAD_TO_DEG, 2)
-            if arm == 'left_arm':
+            if arm == 'left':
                 print(f"左夹爪角度: {angle_deg}")
             else:
                 print(f"右夹爪角度: {angle_deg}")

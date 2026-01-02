@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bessica_d_sdk"
+version = "3.1.1"
+description = "Python SDK for controlling the Bessica D robotic arm."
+readme = "README.md"
+requires-python = ">=3.7"
+authors = [
+    {name = "Synria Robotics", email = "support@synriarobotics.ai"}
+]
+keywords = ["robotics", "robotic-arm", "bessica_d_sdk-d", "sdk", "serial-communication"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Hardware :: Hardware Drivers",
+    "Topic :: Scientific/Engineering", 
+]
+
+dependencies = [
+    "pyserial>=3.0",
+    "numpy>=1.21.0",
+    "scipy>=1.7.0",
+    "matplotlib>=3.3.0",
+    "pyyaml>=6.0",
+    "omegaconf>=2.3.0",
+    "pythoncrc",
+    "pycrc",
+    "robocore @ git+https://github.com/Synria-Robotics/RoboCore.git@v2.0.0",
+    "synriard @ git+https://github.com/Synria-Robotics/Synria-Robot-Descriptions.git", 
+]
+
+[project.urls]
+Homepage = "https://github.com/Synria-Robotics/Bessica-D-SDK"
+
+[tool.setuptools]
+# Explicitly target the package folder
+packages = ["bessica_d_sdk"]
+# Set to true so config files inside the package are included
+include-package-data = true

@@ -51,7 +51,7 @@ def main(args):
         target_left = [30, 35, 58, -45, -40, -35, 0]  # 度
         success = robot.move_joint_trajectory(
             q_end=target_left,
-            arm="left_arm",
+            arm="left",
             duration=3.0,
             method='cubic',
             num_points=100,
@@ -88,7 +88,7 @@ def main(args):
         target_right = [-20, 30, 45, -30, -50, -25, 0]  # 度
         success = robot.move_joint_trajectory(
             q_end=target_right,
-            arm="right_arm",
+            arm="right",
             duration=2.5,
             method='linear',
             num_points=80,
@@ -106,7 +106,7 @@ def main(args):
             print("   左臂沿直线移动到目标位姿")
             
             # 获取当前位姿
-            current_pose = robot.get_pose(arm="left_arm")
+            current_pose = robot.get_pose(arm="left")
             if current_pose:
                 # 目标位姿：在当前位置基础上，向前移动10cm，保持姿态
                 target_pose = current_pose['output_to_ik'].copy()
@@ -114,7 +114,7 @@ def main(args):
                 
                 success = robot.move_cartesian_linear(
                     target_pose=target_pose,
-                    arm="left_arm",
+                    arm="left",
                     duration=3.0,
                     num_points=100,
                     ik_method='dls'
@@ -130,7 +130,7 @@ def main(args):
                 print("   回到原位置...")
                 success = robot.move_cartesian_linear(
                     target_pose=current_pose['output_to_ik'],
-                    arm="left_arm",
+                    arm="left",
                     duration=3.0,
                     num_points=100,
                     ik_method='dls'

@@ -10,8 +10,8 @@ which publishes the robot state.
     Format: {"joint_positions": [float] * 14}
 
 The joint ordering is:
-- First 7 values:  left_arm joints
-- Next 7 values:   right_arm joints
+- First 7 values:  left joints
+- Next 7 values:   right joints
 """
 
 import argparse
@@ -43,11 +43,11 @@ def state_callback(msg: String_):
 
     joints = data.get("joint_positions")
     if isinstance(joints, list) and len(joints) == 14:
-        left_arm = joints[:7]
-        right_arm = joints[7:14]
+        left = joints[:7]
+        right = joints[7:14]
         print(f"[DDS Demo 14] Received 14 joints:")
-        print(f"  Left arm (7):  {left_arm}")
-        print(f"  Right arm (7):  {right_arm}")
+        print(f"  Left arm (7):  {left}")
+        print(f"  Right arm (7):  {right}")
     else:
         print(f"[DDS Demo 14] Received data: {data}")
 

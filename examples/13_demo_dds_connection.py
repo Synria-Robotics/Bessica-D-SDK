@@ -10,8 +10,8 @@ topic:
     Format: {"joint_positions": [float] * 14}
 
 The joint ordering is:
-- First 7 values:  left_arm joints  (as returned by `get_joints("left_arm")`)
-- Next 7 values:   right_arm joints (as returned by `get_joints("right_arm")`)
+- First 7 values:  left joints  (as returned by `get_joints("left")`)
+- Next 7 values:   right joints (as returned by `get_joints("right")`)
 
 This matches the real‑robot 14‑DOF interface used by `BessicaRobotDDS`.
 """
@@ -122,8 +122,8 @@ def main(args):
 
         while True:
             # Read both arms' joints; API returns radians
-            joints_left = robot.get_joints(arm="left_arm")
-            joints_right = robot.get_joints(arm="right_arm")
+            joints_left = robot.get_joints(arm="left")
+            joints_right = robot.get_joints(arm="right")
 
             if (
                 not isinstance(joints_left, list)

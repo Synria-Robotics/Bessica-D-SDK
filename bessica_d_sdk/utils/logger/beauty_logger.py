@@ -1,5 +1,5 @@
 import os
-
+from typing import List
 
 # 定义日志级别常量
 class LogLevel:
@@ -14,12 +14,12 @@ class LogLevel:
 
 class BeautyLogger:
     """
-    Lightweight logger for Alicia-D-SDK package.
+    Lightweight logger for Bessica-D-SDK package.
     """
 
     def __init__(self, log_dir: str, log_name: str = 'rofunc.log', verbose: bool = True, min_level: int = LogLevel.INFO):
         """
-        Alicia-D-SDK轻量级日志器
+        Bessica-D-SDK轻量级日志器
 
         :param log_dir: 日志文件保存路径
         :param log_name: 日志文件名
@@ -36,7 +36,7 @@ class BeautyLogger:
         
     def _write_log(self, content, type):
         with open(self.log_path, "a") as f:
-            f.write(" Alicia-D-SDK:{}] {}\n".format(type.upper(), content))
+            f.write(" Bessica-D-SDK:{}] {}\n".format(type.upper(), content))
 
     def _should_print(self, level: int) -> bool:
         """
@@ -135,16 +135,28 @@ def beauty_print(content, type: str = None):
     if type is None:
         type = "info"
     if type == "warning":
-        print("\033[1;37m [Alicia-D-SDK:WARNING] {}\033[0m".format(content))  # For warning (gray)
+        print("\033[1;37m [Bessica-D-SDK:WARNING] {}\033[0m".format(content))  # For warning (gray)
     elif type == "module":
-        print("\033[1;33m [Alicia-D-SDK:MODULE] {}\033[0m".format(content))  # For a new module (light yellow)
+        print("\033[1;33m [Bessica-D-SDK:MODULE] {}\033[0m".format(content))  # For a new module (light yellow)
     elif type == "info":
-        print("\033[1;35m [Alicia-D-SDK:INFO] {}\033[0m".format(content))  # For info (light purple)
+        print("\033[1;35m [Bessica-D-SDK:INFO] {}\033[0m".format(content))  # For info (light purple)
     elif type == "debug":
-        print("\033[1;34m [Alicia-D-SDK:DEBUG] {}\033[0m".format(content))  # For debug (light blue)
+        print("\033[1;34m [Bessica-D-SDK:DEBUG] {}\033[0m".format(content))  # For debug (light blue)
     elif type == "error":
-        print("\033[1;31m [Alicia-D-SDK:ERROR] {}\033[0m".format(content))  # For error (red)
+        print("\033[1;31m [Bessica-D-SDK:ERROR] {}\033[0m".format(content))  # For error (red)
     elif type == "success":
-        print("\033[1;32m [Alicia-D-SDK:SUCCESS] {}\033[0m".format(content))  # For success (green)
+        print("\033[1;32m [Bessica-D-SDK:SUCCESS] {}\033[0m".format(content))  # For success (green)
     else:
         raise ValueError("Invalid level")
+
+
+def hex_print(logger: BeautyLogger, title: str, data: List[int]):
+    """
+    print the data in hex format
+    :param logger: the logger
+    :param title: the title of the data
+    :param data: the data to print
+    :return: None
+    """
+    hex_buf = ' '.join(f"{b:02X}" for b in data)
+    logger.info(f"{title}: {hex_buf}")

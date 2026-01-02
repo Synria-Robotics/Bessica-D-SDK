@@ -1,17 +1,15 @@
 import math
 import time
-from ..utils.logger import logger
+from ..utils.logger import logger, hex_print
 from typing import List, Dict, Tuple, Optional, Union, NamedTuple
 import threading 
 import copy
 
 class JointState(NamedTuple):
     """关节状态数据结构"""
-    angles: List[float]  # 六个关节角度(弧度)
-    gripper: float       # 夹爪角度(弧度)
+    angles: List[float]  # 关节角度(弧度)
+    gripper: float       # 夹爪值(0-1000范围，与Alicia API一致)
     timestamp: float     # 时间戳(秒)
-    # button1: bool        # 按钮1状态
-    # button2: bool        # 按钮2状态
 
 JointStateDict = Dict[str, JointState]
 
@@ -23,19 +21,27 @@ class DataParser:
     RAD_TO_DEG = 180.0 / math.pi  # 弧度转角度系数
     
     # 指令ID
-    CMD_ZERO_POS = 0x03    # 机械臂以当前位置为零点  
-    CMD_DUAL_ARM = 0x06   # 四机械臂角度反馈与控制
-    CMD_TORQUE = 0x13      # 机械臂力矩控制
-    CMD_ERROR = 0xEE       # 错误反馈
+    # CMD_ZERO_POS = 0x03    # 机械臂以当前位置为零点  
+    # CMD_DUAL_ARM = 0x06   # 四机械臂角度反馈与控制
+    # CMD_TORQUE = 0x13      # 机械臂力矩控制
+    # CMD_ERROR = 0xEE       # 错误反馈
+    # Command IDs
+    CMD_GRIPPER = 0x04     # Gripper control and travel feedback
+    CMD_ZERO_POS = 0x03    # Set current position as zero
+    CMD_JOINT = 0x06       # Joint angle feedback and control
+    CMD_VERSION = 0x01     # Firmware version feedback
+    CMD_TORQUE = 0x05      # Torque control
+    CMD_ERROR = 0xEE       # Error feedback
+    CMD_SELF_CHECK = 0xFE  # Machine self-check (servo health)
+    GRI_MAX_50MM = 3290
+    GRI_MAX_100MM = 3600
 
-    # 数据长度（兼容旧/新协议）
-    JOINT_DATA_SIZE_V1 = 28  # 旧: 仅关节 (右/左 或 左/右 各 14B)
-    JOINT_DATA_SIZE_V2 = 32  # 新: 关节(14+14) + 夹爪(2+2)
-    GRIPPER_PAIR_BYTES = 4   # 新协议中两个夹爪共 4 字节
 
-    # 识别帧
-    PRESENT_POSITION = 0x38 #当前机械臂关节角度识别帧
-    # PRESENT_SPEED = 0x41    #当前机械臂关节速度识别帧 （待开发）
+    # Data size constants
+    JOINT_DATA_SIZE = 33  # 关节数据: 右臂7关节(14B) + 左臂7关节(14B) + 右夹爪(2B) + 左夹爪(2B) + 运行状态(1B)
+    PER_ARM_JOINT_BYTES = 14  # 7关节 * 2字节
+    GRIPPER_PAIR_BYTES = 4   # 两个夹爪共 4 字节
+    RUN_STATUS_BYTES = 1     # 运行状态 1 字节
 
     
     def __init__(self, lock: threading.Lock, debug_mode: bool = False, ):
@@ -48,73 +54,108 @@ class DataParser:
         self.debug_mode = debug_mode
         
         # 存储最新数据   
-        self._joint_states = {"left_arm": JointState([0.0]*7, 0.0, 0.0),
-                              "right_arm": JointState([0.0]*7, 0.0, 0.0)}
+        self._version_info: Optional[Dict[str, str]] = None
+
+
+        self._joint_states = {"left": JointState([0.0]*7, 0.0, 0.0),
+                              "right": JointState([0.0]*7, 0.0, 0.0)}
         self._lock = lock
         self.direction_map = {
-            "left_arm":  [1, -1, 1, -1, 1, 1, -1],
-            "right_arm": [1, 1, 1, -1, 1, 1, 1]
+            "left":  [1, -1, 1, -1, 1, 1, -1],
+            "right": [1, 1, 1, -1, 1, 1, 1]
         }
-        # 块顺序配置 (仅用于关节 2*14 字节部分)。
-        # 新协议: 前14字节=右臂, 后14字节=左臂, 最后4字节=右夹爪2+左夹爪2
-        self.block_order = ("right_arm", "left_arm")
+        # Block order: first 14 bytes = right arm, next 14 bytes = left arm
+        # Gripper: 4 bytes = right gripper (2B) + left gripper (2B)
+        self._version_event = threading.Event()
+        
+        # Store run status from joint data
+        self._run_status: Optional[int] = None
+        self._run_status_text: Optional[str] = None
+        
+        # Store temperature data (in Celsius)
+        self._temperature_data: Optional[List[float]] = None
+        self._temperature_timestamp: Optional[float] = None
+        
+        # Store velocity data (in degrees per second)
+        self._velocity_data: Optional[List[float]] = None
+        self._velocity_timestamp: Optional[float] = None
+        
+        # Store gripper type data
+        self._gripper_type: Optional[int] = None
+        self._gripper_type_name_map = {
+            0x00: "50mm",
+            0x02: "100mm",
+        }
+        self._gripper_type_timestamp: Optional[float] = None
+        
+        # Store self-check (servo health) data
+        self._self_check_raw_mask: Optional[int] = None
+        self._self_check_bits: Optional[List[bool]] = None
+        self._self_check_timestamp: Optional[float] = None
+        
+        # Event-based synchronization for async data acquisition
+        self._joint_event = threading.Event()
+        self._temperature_event = threading.Event()
+        self._velocity_event = threading.Event()
+        self._self_check_event = threading.Event()
+        self._gripper_type_event = threading.Event()
 
-        logger.info("初始化数据解析模块")
-        if self.debug_mode:
-            logger.info("调试模式: 启用")
+        # Mapping from info type to corresponding event
+        self._info_event_map = {
+            "version": self._version_event,
+            "joint_gripper": self._joint_event,
+            "temperature": self._temperature_event,
+            "velocity": self._velocity_event,
+            "self_check": self._self_check_event,
+            "gripper_type": self._gripper_type_event,
+        }
+
     
+
     def parse_frame(self, frame: List[int]) -> Optional[Dict]:
         """
-        解析数据帧
-        
-        Args:
-            frame: 完整的数据帧(字节列表)
-            
-        Returns:
-            Dict: 解析结果，如果解析失败则返回None
+        Parse a full data frame.
+
+        :param frame: Complete data frame (byte list)
         """
-        # 基本帧格式检查
-        if len(frame) < 5 or frame[0] != 0xAA or frame[-1] != 0xFF:
-            if self.debug_mode:
-                logger.warning(f"无效数据帧: {self._bytes_to_hex(frame)}")
-            return None
-        
-        # 解析指令ID和数据长度
         cmd_id = frame[1]
-        data_len = frame[2]
-        
-        # 验证数据长度
-        # 兼容两种格式：
-        # A) 旧格式：LEN=DATA，仅数据，不含参数(ident) → 总长应为 LEN + 6（含 头/指令/长度/参数/校验/尾）
-        # B) 新格式：LEN=参数+数据 → 总长应为 LEN + 5（含 头/指令/长度/校验/尾）
-        total_len = len(frame)
-        ok_len = (total_len == data_len + 6) or (total_len == data_len + 5)
-        if not ok_len:
-            if self.debug_mode:
-                logger.warning(
-                    f"数据长度不匹配: LEN=0x{data_len:02X} 实际总长={total_len}, 期望之一=[LEN+6={data_len+6}, LEN+5={data_len+5}]"
-                )
-            return None
-        
-        # 校验和验证
-        if not self._verify_checksum(frame):
-            if self.debug_mode:
-                logger.warning(f"校验和错误: {self._bytes_to_hex(frame)}")
-            return None
-        
-        # 根据指令ID解析数据
-        if cmd_id == self.CMD_DUAL_ARM:
-            return self._parse_joint_data(frame)
+        if cmd_id == self.CMD_VERSION:
+            return self._parse_version_data(frame)
+        elif cmd_id == self.CMD_JOINT:
+            # Check function code to determine which parser to use
+            func_code = frame[2]
+            if func_code == 0x00:
+                return self._parse_joint_data(frame)
+            elif func_code == 0x01:
+                return self._parse_temperature_data(frame)
+            elif func_code == 0x02:
+                return self._parse_velocity_data(frame)
+            else:
+                if self.debug_mode:
+                    logger.debug(f"Unhandled function code in CMD_JOINT: 0x{func_code:02X}")
+                return None
+        elif cmd_id == self.CMD_GRIPPER:
+            # Check function code to determine which parser to use
+            func_code = frame[2]
+            if func_code == 0x0E:
+                return self._parse_gripper_type_data(frame)
+            else:
+                if self.debug_mode:
+                    logger.debug(f"Unhandled function code in CMD_GRIPPER: 0x{func_code:02X}")
+                return None
         elif cmd_id == self.CMD_ERROR:
             return self._parse_error_data(frame)
+        elif cmd_id == self.CMD_SELF_CHECK:
+            return self._parse_self_check_data(frame)
         else:
             if self.debug_mode:
-                logger.debug(f"未处理的指令ID: 0x{cmd_id:02X}")
+                logger.debug(f"Unhandled command ID: 0x{cmd_id:02X}")
             return None
+
     
     def get_joint_state(self, arm: str = ''):
         with self._lock:
-            for a in ['left_arm','right_arm']:
+            for a in ['left','right']:
                 js = self._joint_states[a]
                 if js.angles is None or js.timestamp is None:
                     logger.warning(f"{arm} 的状态尚未更新")
@@ -128,114 +169,306 @@ class DataParser:
         with self._lock:
             self._joint_states[arm] = JointState(angles, gripper, time.time())
 
+
+    def get_info(self, info_type: str):
+        """
+        Unified getter for parsed information, for cooperation with high-level APIs.
+
+        :param info_type: 'joint_gripper' | 'joint' | 'gripper' | 'version' | 'temperature' | 'velocity' | 'self_check' | 'gripper_type'
+        :return: Parsed data for the given type, or None if unavailable
+        """
+        with self._lock:
+            if info_type == "joint_gripper":
+                # Return both arms' joint states
+                left_js = self._joint_states.get('left')
+                right_js = self._joint_states.get('right')
+                if left_js is None or right_js is None:
+                    return None
+                if left_js.angles is None or left_js.timestamp is None:
+                    return None
+                if right_js.angles is None or right_js.timestamp is None:
+                    return None
+                return copy.deepcopy(self._joint_states)
+            elif info_type == "joint":
+                # Return both arms' joint angles
+                left_js = self._joint_states.get('left')
+                right_js = self._joint_states.get('right')
+                if left_js is None or right_js is None:
+                    return None
+                if left_js.angles is None or right_js.angles is None:
+                    return None
+                return {
+                    'left': list(left_js.angles),
+                    'right': list(right_js.angles)
+                }
+            elif info_type == "gripper":
+                # Return both arms' gripper values
+                left_js = self._joint_states.get('left')
+                right_js = self._joint_states.get('right')
+                if left_js is None or right_js is None:
+                    return None
+                return {
+                    'left': left_js.gripper,
+                    'right': right_js.gripper
+                }
+            elif info_type == "version":
+                return dict(self._version_info) if self._version_info else None
+            elif info_type == "temperature":
+                return list(self._temperature_data) if self._temperature_data else None
+            elif info_type == "velocity":
+                return list(self._velocity_data) if self._velocity_data else None
+            elif info_type == "self_check":
+                if self._self_check_raw_mask is None or self._self_check_bits is None:
+                    return None
+                return {
+                    "raw_mask": int(self._self_check_raw_mask),
+                    "bits": list(self._self_check_bits),
+                    "timestamp": self._self_check_timestamp,
+                }
+            elif info_type == "gripper_type":
+                if self._gripper_type is None:
+                    return None
+                return self._gripper_type_name_map.get(
+                    self._gripper_type,
+                    f"unknown(0x{self._gripper_type:02X})",
+                )
+            else:
+                raise ValueError(f"Unsupported info type: {info_type}")
+
+
+
+    def _parse_version_data(self, frame: List[int]) -> Dict:
+        """
+        Parse version data frame (CMD=0x01).
+
+        :param frame: Complete data frame
+        """
+        # Basic length check: header(1)+CMD(1)+func(1)+LEN(1)+DATA(LEN)+checksum(1)+footer(1)
+        if len(frame) < 4 + frame[3] + 2:
+            logger.warning(f"Version frame too short: expect ≥{4 + frame[3] + 2}, got {len(frame)}")
+            return None
+
+        data_len = frame[3]
+        data_start = 4
+        data_end = data_start + data_len
+        data_bytes = frame[data_start:data_end]
+
+        if data_len < 24:
+            logger.warning(f"Version data length too short: expect 24, got {data_len}")
+            return None
+
+        # Split fields according to protocol
+        serial_bytes = data_bytes[0:16]
+        hardware_bytes = data_bytes[16:20]
+        firmware_bytes = data_bytes[20:24]
+
+        def _bytes_to_ascii(b: List[int]) -> str:
+            try:
+                return "".join(chr(x) for x in b).strip()
+            except Exception as e:
+                logger.error(f"Version ASCII parse exception: {e}")
+                return ""
+
+        def _bytes_to_decimal(b: List[int]) -> int:
+            """Convert little-endian byte array to decimal integer."""
+            result = 0
+            for i, byte in enumerate(b):
+                result |= (byte & 0xFF) << (i * 8)
+            return result
+
+        # Parse serial number as ASCII string
+        serial_number = _bytes_to_ascii(serial_bytes)
+
+        # Parse hardware and firmware versions as little-endian decimal values
+        hardware_decimal = _bytes_to_decimal(hardware_bytes)
+        firmware_decimal = _bytes_to_decimal(firmware_bytes)
+
+        # Convert decimal values to version strings
+        hardware_str = self._decimal_to_version_string(hardware_decimal)
+        firmware_str = self._decimal_to_version_string(firmware_decimal)
+
+        # Store firmware version (for upper-level API)
+        with self._lock:
+            self._firmware_version = firmware_str
+            self._version_info = {
+                "serial_number": serial_number,
+                "hardware_version": hardware_str,
+                "firmware_version": firmware_str,
+            }
+
+        # Signal that version info has been received and parsed
+        self._version_event.set()
+
+        if self.debug_mode:
+            logger.debug(
+                f"Version parsed: SN='{serial_number}', HW={hardware_decimal}('{hardware_str}'), FW={firmware_decimal}('{firmware_str}')"
+            )
+
+        return {
+            "type": "version_data",
+            "serial_number": serial_number,
+            "hardware_version": hardware_str,
+            "firmware_version_raw": firmware_decimal,
+            "version": firmware_str,
+            "timestamp": time.time(),
+        }
+
+
+
     def _parse_joint_data(self, frame: List[int]) -> Dict:
         """
-        解析关节数据帧 (CMD_DUAL_ARM)
-        新协议:
-          Frame = 0xAA CMD LEN IDENT DATA CHECK 0xFF
-          IDENT = PRESENT_POSITION (0x38)
-          LEN = 28 字节: left_arm(7关节*2B) + right_arm(7关节*2B)
-          单个关节值: 2 字节 little-endian (0-4095 对应 -180~+180° 映射)
-          不包含夹爪数据，gripper 固定 0
-        返回统一结构 dual_arm_joint_data
+        Parse joint data frame (CMD=0x06, FUNC=0x00).
+        
+        Frame structure: 0xAA CMD FUNC LEN DATA CHECK 0xFF
+        Data format: 右臂7关节(14B) + 左臂7关节(14B) + 右夹爪(2B) + 左夹爪(2B) + 运行状态(1B) = 33B
+        Joint value: 2 bytes little-endian (0-4095 maps to -180~+180°)
+        
+        :param frame: Complete data frame
+        :return: Parsed joint data dictionary
         """
         try:
-            # 兼容旧/新协议的 IDENT：有的固件返回 0x00，有的返回 PRESENT_POSITION(0x38)
-            ident = frame[3]
-            if ident not in (0x00, self.PRESENT_POSITION):
-                logger.warning(f"关节数据类型错误: ident=0x{ident:02X}")
+            # Validate frame structure
+            if not self._validate_joint_frame(frame):
                 return None
-            data_len = frame[2]
-            # 规范化有效载荷长度（不含 ident/参数）
-            if data_len in (self.JOINT_DATA_SIZE_V1, self.JOINT_DATA_SIZE_V2):
-                payload_len = data_len  # 旧格式：LEN=DATA
-            elif (data_len - 1) in (self.JOINT_DATA_SIZE_V1, self.JOINT_DATA_SIZE_V2):
-                payload_len = data_len - 1  # 新格式：LEN=IDENT+DATA
-            else:
-                logger.warning(f"不支持的数据长度: 0x{data_len:02X}")
+            
+            data_start = 4
+            data_len = frame[3]
+            
+            # Extract data blocks
+            right_arm_block = frame[data_start : data_start + self.PER_ARM_JOINT_BYTES]
+            left_arm_block = frame[data_start + self.PER_ARM_JOINT_BYTES : data_start + 2 * self.PER_ARM_JOINT_BYTES]
+            gripper_block = frame[data_start + 2 * self.PER_ARM_JOINT_BYTES : data_start + 2 * self.PER_ARM_JOINT_BYTES + self.GRIPPER_PAIR_BYTES]
+            hex_print(logger, "gripper_block", gripper_block)
+            run_status_byte = frame[data_start + 2 * self.PER_ARM_JOINT_BYTES + self.GRIPPER_PAIR_BYTES] if data_len >= self.JOINT_DATA_SIZE else None
+            
+            # Decode joint angles
+            right_angles = self._decode_joint_block(right_arm_block, "right")
+            left_angles = self._decode_joint_block(left_arm_block, "left")
+            
+            if right_angles is None or left_angles is None:
                 return None
-
-            data_start = 4  # DATA 起始
-            per_arm_bytes = 14  # 7 关节 * 2B
-            block1 = frame[data_start : data_start + per_arm_bytes]
-            block2 = frame[data_start + per_arm_bytes : data_start + 2 * per_arm_bytes]
-            gripper_block = None
-            if payload_len == self.JOINT_DATA_SIZE_V2:
-                gripper_block = frame[data_start + 2 * per_arm_bytes : data_start + 2 * per_arm_bytes + self.GRIPPER_PAIR_BYTES]
-
-            if len(block1) != per_arm_bytes or len(block2) != per_arm_bytes:
-                logger.warning("关节数据分块长度异常")
-                return None
-            if gripper_block is not None and len(gripper_block) != self.GRIPPER_PAIR_BYTES:
-                logger.warning("夹爪数据长度异常")
-                gripper_block = None  # 继续解析关节
-
-            def check_block(block):
-                if len(block) < 2:
-                    return False
-                v = block[0] | (block[1] << 8)
-                return v <= 4096
-
-            if not check_block(block1) or not check_block(block2):
-                return None
-
-            def decode(block: List[int]) -> List[float]:
-                angles = []
-                for i in range(7):
-                    lo = block[2 * i]
-                    hi = block[2 * i + 1]
-                    raw = (lo & 0xFF) | ((hi & 0xFF) << 8)
-                    angles.append(self._value_to_radians(raw))
-                return angles
-
-            arm1, arm2 = self.block_order  # 新协议默认 (right_arm, left_arm)
-            a1_raw = decode(block1)
-            a2_raw = decode(block2)
-            # print("left arm:", arm2, a2_raw)
-            # print("right arm:", arm1, a1_raw)
-            # a1_map = a1_raw
-            # a2_map = a2_raw
-            a1_map = [a * self.direction_map[arm1][i] for i, a in enumerate(a1_raw)]
-            a2_map = [a * self.direction_map[arm2][i] for i, a in enumerate(a2_raw)]
-            self._update_joint_state(arm1, a1_map, 0.0)
-            self._update_joint_state(arm2, a2_map, 0.0)
-
-            # 解析夹爪 (新协议末尾 4 字节: 右夹爪(2B) + 左夹爪(2B)，同小端)
-            if gripper_block:
-                try:
-                    right_val = gripper_block[0] | (gripper_block[1] << 8)
-                    left_val  = gripper_block[2] | (gripper_block[3] << 8)
-                    # 转换为 0~100 度 (按 controller 中 _rad_to_hardware_value_grip 的反向推导)
-                    servo_min = 2048
-                    servo_max = 3590
-                    def grip_to_rad(v):
-                        if v < servo_min: v = servo_min
-                        if v > servo_max: v = servo_max
-                        deg = (v - servo_min) / (servo_max - servo_min) * 100.0
-                        return deg * self.DEG_TO_RAD
-                    right_grip = grip_to_rad(right_val)
-                    left_grip  = grip_to_rad(left_val)
-                    # 更新（保持之前已写入的角度）
-                    self._update_joint_state(arm1, self._joint_states[arm1].angles, right_grip if arm1 == 'right_arm' else left_grip)
-                    self._update_joint_state(arm2, self._joint_states[arm2].angles, left_grip if arm2 == 'left_arm' else right_grip)
-                    # print("left joint angles: ", self._joint_states['left_arm'].angles)
-                except Exception as e:
-                    if self.debug_mode:
-                        logger.warning(f"夹爪解析失败: {e}")
-
+            
+            # Decode grippers (returns raw values 0-1000, same as Alicia API)
+            right_gripper, left_gripper = self._decode_gripper_block(gripper_block)
+            
+            # Update joint states
+            self._update_joint_state("right", right_angles, right_gripper)
+            self._update_joint_state("left", left_angles, left_gripper)
+            
+            # Parse run status
+            run_status, run_status_text = self._decode_run_status(run_status_byte)
+            if run_status is not None:
+                with self._lock:
+                    self._run_status = run_status
+                    self._run_status_text = run_status_text
+            
+            # Signal that joint state has been updated
+            self._joint_event.set()
+            
             return {
                 "type": "dual_arm_joint_data",
-                "timestamp_left": self._joint_states['left_arm'].timestamp,
-                "timestamp_right": self._joint_states['right_arm'].timestamp,
-                "left_arm_angle": self._joint_states['left_arm'].angles,
-                "right_arm_angle": self._joint_states['right_arm'].angles,
-                "left_gripper": self._joint_states['left_arm'].gripper,
-                "right_gripper": self._joint_states['right_arm'].gripper,
-                "protocol_version": 2 if payload_len == self.JOINT_DATA_SIZE_V2 else 1
+                "timestamp_left": self._joint_states['left'].timestamp,
+                "timestamp_right": self._joint_states['right'].timestamp,
+                "left_angle": self._joint_states['left'].angles,
+                "right_angle": self._joint_states['right'].angles,
+                "left_gripper": self._joint_states['left'].gripper,
+                "right_gripper": self._joint_states['right'].gripper,
+                "run_status": run_status,
+                "run_status_text": run_status_text,
             }
         except Exception as e:
             logger.error(f"解析关节数据异常: {e}")
             return None
+
+    def _validate_joint_frame(self, frame: List[int]) -> bool:
+        """Validate joint data frame structure."""
+        if len(frame) < 4:
+            logger.warning("关节数据帧长度不足")
+            return False
+        
+        func_code = frame[2]
+        if func_code != 0x00:
+            logger.warning(f"关节数据功能码错误: 期望0x00, 得到0x{func_code:02X}")
+            return False
+        
+        data_len = frame[3]
+        expected_min_len = 4 + data_len + 2  # header+cmd+func+len + data + checksum+footer
+        if len(frame) < expected_min_len:
+            logger.warning(f"关节数据帧长度不匹配: LEN={data_len}, frame_len={len(frame)}")
+            return False
+        
+        if data_len != self.JOINT_DATA_SIZE:
+            logger.warning(f"不支持的数据长度: 期望{self.JOINT_DATA_SIZE}, 得到{data_len}")
+            return False
+        
+        return True
+
+    def _decode_joint_block(self, block: List[int], arm: str) -> Optional[List[float]]:
+        """Decode joint angle block (14 bytes for 7 joints)."""
+        if len(block) != self.PER_ARM_JOINT_BYTES:
+            logger.warning(f"{arm}关节数据块长度异常: 期望{self.PER_ARM_JOINT_BYTES}, 得到{len(block)}")
+            return None
+        
+        angles = []
+        for i in range(7):
+            lo = block[2 * i] & 0xFF
+            hi = block[2 * i + 1] & 0xFF
+            raw_value = lo | (hi << 8)
+            
+            if raw_value > 4095:
+                logger.warning(f"{arm}关节{i+1}值超出范围: {raw_value}")
+                return None
+            
+            angle_rad = self._value_to_radians(raw_value)
+            # Apply direction mapping
+            direction = self.direction_map[arm][i]
+            angles.append(angle_rad * direction)
+        
+        return angles
+
+    def _decode_gripper_block(self, gripper_block: List[int]) -> Tuple[float, float]:
+        """Decode gripper block (4 bytes: right gripper 2B + left gripper 2B).
+        
+        Returns raw gripper values in 0-1000 range.
+        No conversion to radians or degrees - use raw value directly.
+        """
+        if len(gripper_block) != self.GRIPPER_PAIR_BYTES:
+            if self.debug_mode:
+                logger.warning(f"夹爪数据长度异常: 期望{self.GRIPPER_PAIR_BYTES}, 得到{len(gripper_block)}")
+            return 0.0, 0.0
+        
+        try:
+            # Read little-endian 16-bit values 
+            right_raw = (gripper_block[0] & 0xFF) | ((gripper_block[1] & 0xFF) << 8)
+            left_raw = (gripper_block[2] & 0xFF) | ((gripper_block[3] & 0xFF) << 8)
+            
+            # Map raw gripper value to 0-1000 range
+            # Hardware uses 0-1000 range, return directly without conversion
+            right_gripper = float(max(0.0, min(1000.0, right_raw)))
+            left_gripper = float(max(0.0, min(1000.0, left_raw)))
+            
+            return right_gripper, left_gripper
+        except Exception as e:
+            if self.debug_mode:
+                logger.warning(f"夹爪解析失败: {e}")
+            return 0.0, 0.0
+
+    def _decode_run_status(self, status_byte: Optional[int]) -> Tuple[Optional[int], str]:
+        """Decode run status byte."""
+        if status_byte is None:
+            return None, "unknown"
+        
+        run_status_map = {
+            0x00: "idle",
+            0x01: "locked",
+            0x10: "sync",
+            0x11: "sync_locked",
+            0xE1: "overheat",
+            0xE2: "overheat_protect",
+        }
+        
+        status_text = run_status_map.get(status_byte, "unknown")
+        return status_byte, status_text
 
 
     def _value_to_radians(self, value: int) -> float:
@@ -372,3 +605,211 @@ class DataParser:
             str: 十六进制字符串
         """
         return " ".join([f"{b:02X}" for b in data])
+
+
+    def _decimal_to_version_string(self, decimal_value: int) -> str:
+        """
+        Convert decimal value to version string.
+        :param decimal_value: Decimal version value
+        :return: Version string in format "X.Y.Z" (MAJOR.MINOR.PATCH)
+        """
+        if decimal_value < 0:
+            return "unknown"
+        
+        decimal_str = str(decimal_value)
+        
+        if len(decimal_str) == 1:
+            version_str = f"0.0.{decimal_str}"
+        elif len(decimal_str) == 2:
+            version_str = f"{decimal_str[0]}.{decimal_str[1]}.0"
+        elif len(decimal_str) == 3:
+            version_str = f"{decimal_str[0]}.{decimal_str[1]}.{decimal_str[2]}"
+        else:
+            version_str = f"{decimal_str[0]}.{decimal_str[1]}.{decimal_str[2:]}"
+        
+        return version_str
+
+    def _parse_temperature_data(self, frame: List[int]) -> Dict:
+        """
+        Parse temperature data frame (CMD=0x06, FUNC=0x01).
+
+        :param frame: Complete data frame
+        """
+        data_len = frame[3]
+        expected_min_len = 4 + data_len + 2
+        if len(frame) < expected_min_len:
+            logger.warning(f"Temperature frame length mismatch: LEN={data_len}, frame_len={len(frame)}")
+            return None
+
+        data_start = 4
+        data_end = data_start + data_len
+        data_bytes = frame[data_start:data_end]
+
+        # Parse temperature values (each byte represents temperature in Celsius)
+        temperatures = [float(byte) for byte in data_bytes]
+
+        # Store temperature data
+        with self._lock:
+            self._temperature_data = temperatures
+            self._temperature_timestamp = time.time()
+
+        # Signal that temperature data has been updated
+        self._temperature_event.set()
+
+        if self.debug_mode:
+            logger.debug(f"Temperature data: {temperatures}°C")
+
+        return {
+            "type": "temperature_data",
+            "temperatures": temperatures,
+            "timestamp": self._temperature_timestamp,
+        }
+
+    def _parse_velocity_data(self, frame: List[int]) -> Dict:
+        """
+        Parse velocity data frame (CMD=0x06, FUNC=0x02).
+
+        :param frame: Complete data frame
+        """
+        data_len = frame[3]
+        expected_min_len = 4 + data_len + 2
+        if len(frame) < expected_min_len:
+            logger.warning(f"Velocity frame length mismatch: LEN={data_len}, frame_len={len(frame)}")
+            return None
+
+        data_start = 4
+        data_end = data_start + data_len
+        data_bytes = frame[data_start:data_end]
+
+        # Parse velocity values (2 bytes per servo, low byte first)
+        num_servos = data_len // 2
+        velocities = []
+        for i in range(num_servos):
+            low_byte = data_bytes[i * 2]
+            high_byte = data_bytes[i * 2 + 1]
+            velocity_raw = (low_byte & 0xFF) | ((high_byte & 0xFF) << 8)
+            # Convert raw velocity to degrees per second
+            # Note: velocity_raw can exceed the expected limit of 5000
+            velocity_deg_s = self._raw_velocity_to_deg_per_sec(velocity_raw)
+            velocities.append(velocity_deg_s)
+
+        # Store velocity data
+        with self._lock:
+            self._velocity_data = velocities
+            self._velocity_timestamp = time.time()
+
+        # Signal that velocity data has been updated
+        self._velocity_event.set()
+
+        if self.debug_mode:
+            logger.debug(f"Velocity data (deg/s): {velocities}")
+
+        return {
+            "type": "velocity_data",
+            "velocities": velocities,
+            "timestamp": self._velocity_timestamp,
+        }
+
+    def _raw_velocity_to_deg_per_sec(self, velocity_raw: int) -> float:
+        """
+        Convert raw velocity value to degrees per second.
+        
+        :param velocity_raw: Raw velocity value from hardware
+        :return: Velocity in degrees per second
+        """
+        # This is a placeholder - adjust based on actual hardware specification
+        # Assuming raw value is in some unit that needs conversion
+        return float(velocity_raw) * 0.1  # Example conversion, adjust as needed
+
+    def _parse_self_check_data(self, frame: List[int]) -> Dict:
+        """
+        Parse machine self-check frame (CMD=0xFE, FUNC=0x00).
+
+        :param frame: Complete data frame
+        """
+        data_len = frame[3]
+        expected_min_len = 4 + data_len + 2
+        if len(frame) < expected_min_len:
+            logger.warning(f"Self-check frame length mismatch: LEN={data_len}, frame_len={len(frame)}")
+            return None
+
+        data_start = 4
+        data_end = data_start + data_len
+        data_bytes = frame[data_start:data_end]
+
+        if data_len < 2:
+            logger.warning(f"Self-check DATA too short: expect ≥2 bytes, got {data_len}")
+            return None
+
+        low = data_bytes[0]
+        high = data_bytes[1]
+        raw_mask = (low & 0xFF) | ((high & 0xFF) << 8)
+        # Decode to boolean list (LSB first), up to 16 bits to be safe
+        bits: List[bool] = [(raw_mask >> i) & 0x1 == 1 for i in range(10)]
+
+        with self._lock:
+            self._self_check_raw_mask = raw_mask
+            self._self_check_bits = bits
+            self._self_check_timestamp = time.time()
+
+        # Signal that self-check data has been updated
+        self._self_check_event.set()
+
+        if self.debug_mode:
+            logger.debug(
+                f"Self-check result: raw_mask=0x{raw_mask:04X}, "
+                f"bits={bits}"
+            )
+
+        return {
+            "type": "self_check_data",
+            "raw_mask": raw_mask,
+            "bits": bits,
+            "timestamp": self._self_check_timestamp,
+        }
+
+    def _parse_gripper_type_data(self, frame: List[int]) -> Dict:
+        """
+        Parse gripper type data frame (CMD=0x04, FUNC=0x0E).
+
+        :param frame: Complete data frame
+        """
+        data_len = frame[3]
+        expected_min_len = 4 + data_len + 2
+        if len(frame) < expected_min_len:
+            logger.warning(f"Gripper type frame length mismatch: LEN={data_len}, frame_len={len(frame)}")
+            return None
+
+        data_start = 4
+        data_end = data_start + data_len
+        data_bytes = frame[data_start:data_end]
+
+        if data_len < 1:
+            logger.warning(f"Gripper type DATA too short: expect ≥1 byte, got {data_len}")
+            return None
+
+        gripper_type_raw = data_bytes[0] & 0xFF
+
+        # Map gripper type values
+        type_name = self._gripper_type_name_map.get(
+            gripper_type_raw,
+            f"unknown(0x{gripper_type_raw:02X})",
+        )
+
+        # Store gripper type data
+        with self._lock:
+            self._gripper_type = gripper_type_raw
+            self._gripper_type_timestamp = time.time()
+
+        # Signal that gripper type data has been updated
+        self._gripper_type_event.set()
+
+        if self.debug_mode:
+            logger.debug(f"Gripper type: {type_name} (0x{gripper_type_raw:02X})")
+
+        return {
+            "type": "gripper_type_data",
+            "gripper_type": gripper_type_raw,
+            "type_name": type_name,
+            "timestamp": self._gripper_type_timestamp,
+        }

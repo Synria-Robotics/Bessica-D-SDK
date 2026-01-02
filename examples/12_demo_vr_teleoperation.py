@@ -137,7 +137,7 @@ class RealRobotDDSBridge:
             if joint_positions is None:
                 return None
             
-            # Convert to list format: [left_arm_7_joints, right_arm_7_joints] -> [14 joints]
+            # Convert to list format: [left_7_joints, right_7_joints] -> [14 joints]
             if isinstance(joint_positions, list) and len(joint_positions) == 2:
                 # Dual arm: [[left_7], [right_7]]
                 left_angles = joint_positions[0]
@@ -160,8 +160,8 @@ class RealRobotDDSBridge:
             
             # Try to get gripper poses using forward kinematics
             try:
-                left_pose = self.robot.get_pose(arm="left_arm")
-                right_pose = self.robot.get_pose(arm="right_arm")
+                left_pose = self.robot.get_pose(arm="left")
+                right_pose = self.robot.get_pose(arm="right")
                 
                 if left_pose and right_pose:
                     # Extract position and quaternion from pose dict

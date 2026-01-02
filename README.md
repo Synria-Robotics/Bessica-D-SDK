@@ -95,7 +95,7 @@ Bessica-D-SDK/
     # 控制左臂到目标关节角度（度）
     robot.set_joint_target(
         target_joints=[10, 20, 20, 10, 45, 20, 0],
-        arm="left_arm",
+        arm="left",
         joint_format="deg"
     )
     

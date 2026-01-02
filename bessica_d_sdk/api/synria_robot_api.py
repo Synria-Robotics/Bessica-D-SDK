@@ -9,11 +9,12 @@ SynriaBessicaRobotAPI - User-level API (Bessica)
 - 参数校验与最小插值运动
 
 说明:
-- 适配 Bessica 的 ServoDriver：单臂7关节、需显式传入 arm("left_arm"/"right_arm")；支持双臂 both
+- 适配 Bessica 的 ServoDriver：单臂7关节、需显式传入 arm("left"/"right")；支持双臂 both
 - 尽量对齐 Alicia 的 SynriaRobotAPI 方法命名，以便后续规范化统一
 """
 
 import time
+from tkinter import FALSE
 from typing import List, Optional, Dict, Union, Tuple
 import numpy as np
 import json
@@ -27,21 +28,10 @@ from robocore.kinematics import forward_kinematics
 from robocore.kinematics.bimanual import bimanual_forward_kinematics
 from robocore.transform import matrix_to_euler, matrix_to_quaternion
 from synriard import get_model_path
-# from robocore.planning.trajectory import (
-#     cubic_polynomial_trajectory,
-#     quintic_polynomial_trajectory,
-#     linear_joint_trajectory,
-#     linear_cartesian_trajectory,
-#     circular_cartesian_trajectory,
-#     cartesian_waypoint_trajectory
-# )
+from bessica_d_sdk.hardware.data_parser import JointState
+
 from ..utils.logger import logger
 from ..hardware import ServoDriver
-# from ..execution import HardwareExecutor, JointPlanner
-# from ..utils.logger import logger
-# logger = logging.getLogger("SynriaBessicaRobotAPI")
-# from robocore.utils.control_utils import compute_steps_and_delay, validate_joint_list
-
 
 class SynriaBessicaRobotAPI:
     """Bessica 机器人 API - 与 ServoDriver 协作，面向双臂/单臂控制。"""
@@ -56,6 +46,7 @@ class SynriaBessicaRobotAPI:
         left_end_link: str = 'left_arm_link7',
         right_base_link: str = 'base_link',
         right_end_link: str = 'right_arm_link7',
+        auto_connect: bool = True,
     ):
         """Initialize robot API.
 
@@ -69,10 +60,16 @@ class SynriaBessicaRobotAPI:
         :param right_end_link: Right arm end-effector link name
         """
         self.servo_driver = servo_driver
-        
+        self.data_parser = servo_driver.data_parser  # Direct access to data parser
+
         model_path = str(get_model_path("Bessica_D", version=robot_version, variant=variant))
 
-        self.robot_model = BimanualRobotModel(model_path, left_end_link=left_end_link, right_end_link=right_end_link)
+        self.robot_model = BimanualRobotModel(
+            model_path, 
+            left_end_link=left_end_link, 
+            right_end_link=right_end_link,
+            base_link=left_base_link  # Both arms share the same base_link
+        )
         
         # Access left and right arm models from bimanual model
         self.left_model = self.robot_model.left_model
@@ -82,7 +79,8 @@ class SynriaBessicaRobotAPI:
         # self.hardware_executor = HardwareExecutor(servo_driver)
         # self.joint_planner = JointPlanner()
         self.home_angles = [0.0] * 7
-        self.default_arm = "both"
+        if auto_connect:
+            self.connect()
 
     # ==================== Connection Management ====================
 
@@ -99,11 +97,50 @@ class SynriaBessicaRobotAPI:
         self.servo_driver.stop_update_thread()
         self.servo_driver.disconnect()
 
+
+    # ==================== Get Robot Information ====================
+
+    def get_robot_state(self, info_type: str = "joint_gripper", timeout: float = 1.0) -> Optional[Union[JointState, Dict, List[float], str, float]]:
+        """
+        Unified API to get robot state information.
+        
+        :param info_type: Type of information to get. Options:
+            - "joint_gripper": Returns JointState (arm joint angles, gripper value, timestamp, run_status_text)
+            - "joint": Returns List[float] of arm joint angles (radians) only
+            - "gripper": Returns float gripper value (0-1000) only
+            - "version": Returns Dict with serial_number, hardware_version, firmware_version
+            - "temperature": Returns List[float] of temperatures in Celsius
+            - "velocity": Returns List[float] of velocities in degrees per second
+            - "gripper_type": Returns str (e.g., "50mm" or "100mm") or None if unavailable
+            - "self_check": Returns Dict with self-check data (or None if failed)
+        :param timeout: Maximum time to wait for response in seconds
+        :return: Requested data or None if failed
+        """
+        # Special handling for gripper_type: try cache first, then hardware query
+        if info_type == "gripper_type":
+            return self._get_gripper_type_with_cache(timeout)
+
+        # Joint and gripper are acquired together from hardware using the "joint" command
+        if info_type in ("joint_gripper", "joint", "gripper"):
+            if not self.servo_driver.acquire_info("joint_gripper", wait=True, timeout=timeout):
+                logger.error(f"Failed to get joint/gripper data within timeout period")
+                return None
+            return self.data_parser.get_info(info_type)
+        
+        # Other info types map directly to hardware commands
+        if not self.servo_driver.acquire_info(info_type, wait=True, timeout=timeout):
+            logger.error(f"Failed to get {info_type} data within timeout period")
+            return None
+        result = self.data_parser.get_info(info_type)
+        return result
+
+
+
     # ==================== 关节控制 ====================
     def set_home(self, arm: str = "both") -> bool:
         """Move robot to home position.
 
-        :param arm: Arm to control, "left_arm", "right_arm", or "both"
+        :param arm: Arm to control, "left", "right", or "both"
         :return: True if successful
         """
         logger.info(f"set_home at head: arm={arm}")
@@ -121,7 +158,7 @@ class SynriaBessicaRobotAPI:
             success &= self.set_gripper_target(command="open", arm="both")
             return success
 
-        elif arm in ("left_arm", "right_arm"):
+        elif arm in ("left", "right"):
             # Single arm: move to home and open gripper
             ok = self.set_joint_target(
                 target_joints=home_angles,
@@ -148,13 +185,13 @@ class SynriaBessicaRobotAPI:
         """Move robot to target joint angles.
 
         :param target_joints: Target joint angles. For single arm: List[float] (7 angles). For dual arm: List[List[float]] (2x7 angles)
-        :param arm: Arm to control, "left_arm", "right_arm", or "both" (default: self.default_arm)
+        :param arm: Arm to control, "left", "right", or "both" (default: "both")
         :param joint_format: Unit format, "deg" or "rad" (default: "rad")
         :param wait: Wait for motion completion if True
         :param tolerance: Maximum allowed error per joint in same unit as joint_format (default: 0.0524 rad ≈ 3.0 deg)
         :return: True if command sent successfully
         """
-        arm = arm or self.default_arm
+        arm = arm or "both"
         is_deg = joint_format.lower() in ("deg", "degree", "degrees")
         is_rad = joint_format.lower() in ("rad", "radian", "radians")
         
@@ -181,16 +218,16 @@ class SynriaBessicaRobotAPI:
             target_right_rad = [a * convert for a in target_right]
             
             success = self.servo_driver.set_joint_angles(
-                joint_angles=target_left_rad, arm="left_arm", 
+                joint_angles=target_left_rad, arm="left", 
                 wait_for_completion=wait, tolerance=tolerance_rad
             )
             success &= self.servo_driver.set_joint_angles(
-                joint_angles=target_right_rad, arm="right_arm", 
+                joint_angles=target_right_rad, arm="right", 
                 wait_for_completion=wait, tolerance=tolerance_rad
             )
             return success
             
-        elif arm in ("left_arm", "right_arm"):
+        elif arm in ("left", "right"):
             if not isinstance(target_joints, list) or len(target_joints) != 7:
                 logger.error(f"set_joint_target: 单臂模式必须提供7个关节角度，但得到 {len(target_joints) if isinstance(target_joints, list) else '非列表'}")
                 return False
@@ -216,7 +253,7 @@ class SynriaBessicaRobotAPI:
 
         :param target_pose1: Target pose as [x, y, z, qx, qy, qz, qw]. For single arm: used for specified arm. For both: left arm.
         :param target_pose2: Target pose for right arm as [x, y, z, qx, qy, qz, qw] (required when arm="both")
-        :param arm: Arm to control, "left_arm", "right_arm", or "both" (default: self.default_arm)
+        :param arm: Arm to control, "left", "right", or "both" (default: "both")
         :param method: IK solver method, 'dls', 'pinv', or 'transpose'
         :param tolerance: Position and orientation tolerance
         :param max_iters: Maximum number of iterations
@@ -226,7 +263,7 @@ class SynriaBessicaRobotAPI:
         if not hasattr(self, 'robot_model') or self.robot_model is None:
             return {'success': False, 'message': 'robot_model not available', 'q': None}
         
-        arm = arm or self.default_arm
+        arm = arm or "both"
         
         # Get current joint positions as initial guess
         current_joints = self.get_joints(arm=arm)
@@ -241,7 +278,7 @@ class SynriaBessicaRobotAPI:
             return make_transform(rot, pos)
         
         # Handle single arm case
-        if arm in ("left_arm", "right_arm"):
+        if arm in ("left", "right"):
             T_target = pose_to_matrix(target_pose1)
             q0 = np.array(current_joints) if isinstance(current_joints, list) else np.array(current_joints)
             print(f"q0: {q0}")
@@ -259,7 +296,7 @@ class SynriaBessicaRobotAPI:
                 ori_tol=tolerance,
             )
             
-            result = ik_result['res_left'] if arm == "left_arm" else ik_result['res_right']
+            result = ik_result['res_left'] if arm == "left" else ik_result['res_right']
             
             # Execute motion if requested
             if execute and result.get('success', False):
@@ -323,7 +360,7 @@ class SynriaBessicaRobotAPI:
     ) -> bool:
         """Control gripper position.
 
-        :param arm: Arm to control, "left_arm", "right_arm", or "both"
+        :param arm: Arm to control, "left", "right", or "both"
         :param command: Command string, 'open' or 'close'
         :param value: Gripper value in degrees, 0 (closed) to 100 (open)
         :param wait_for_completion: Wait until gripper reaches target
@@ -331,7 +368,7 @@ class SynriaBessicaRobotAPI:
         :param tolerance: Acceptable difference to target value in degrees
         :return: True if successful
         """
-        arm = arm or self.default_arm
+        arm = arm or "both"
         if (command is None) == (value is None):
             logger.error("必须二选一提供 command 或 value")
             return False
@@ -346,7 +383,7 @@ class SynriaBessicaRobotAPI:
         if value is None:
             logger.error("必须提供 command 或 value 之一")
             return False
-        if arm in ("left_arm", "right_arm"):
+        if arm in ("left", "right"):
             return self.servo_driver.set_gripper_deg(arm=arm, angle_deg=float(value), wait=wait_for_completion)
         elif arm == "both":
             return self.servo_driver.set_gripper_deg(angle_deg=float(value), arm="both", wait=wait_for_completion)
@@ -358,11 +395,14 @@ class SynriaBessicaRobotAPI:
     def get_joints(self, arm: Optional[str] = None) -> Optional[Union[List[float], List[List[float]]]]:
         """Get current joint angles.
 
-        :param arm: Arm to query, "left_arm", "right_arm", or "both" (default: self.default_arm)
+        :param arm: Arm to query, "left", "right", or "both" (default: "both")
         :return: Joint angles in radians. For single arm: List[float] (7 angles). For dual arm: List[List[float]] (2x7 angles). None if unavailable
         """
-        self.default_arm = "both"
-        arm = arm or self.default_arm
+        arm = arm or "both"
+        # Request joint data from hardware first
+        if not self.servo_driver.acquire_info("joint_gripper", wait=True, timeout=1.0):
+            logger.warning("Failed to acquire joint data from hardware")
+            return None
         joint_angles = self.servo_driver.read_joint_angles(arm)
         # logger.info(f"{arm}'s joint_angles: {joint_angles}")
         return joint_angles
@@ -370,28 +410,32 @@ class SynriaBessicaRobotAPI:
     def get_gripper(self, arm: Optional[str] = None) -> Optional[Union[float, Tuple[float, float]]]:
         """Get current gripper position.
 
-        :param arm: Arm to query, "left_arm", "right_arm", or "both" (default: self.default_arm)
+        :param arm: Arm to query, "left", "right", or "both" (default: "both")
         :return: Gripper position in degrees. For single arm: float. For dual arm: Tuple[float, float]. None if unavailable
         """
-        arm = arm or self.default_arm
+        arm = arm or "both"
+        # Request joint/gripper data from hardware first (gripper data comes with joint data)
+        if not self.servo_driver.acquire_info("joint_gripper", wait=True, timeout=1.0):
+            logger.warning("Failed to acquire gripper data from hardware")
+            return None
         try:
-            return self.servo_driver.read_gripper_data(arm if arm in ['left_arm', 'right_arm'] else 'both')
+            return self.servo_driver.read_gripper_data(arm if arm in ['left', 'right'] else 'both')
         except Exception:
             return None
 
     def get_pose(self, arm: Optional[str] = None) -> Optional[Dict]:
         """Get current end-effector pose.
 
-        :param arm: Arm to query, "left_arm", "right_arm", or "both" (default: self.default_arm)
+        :param arm: Arm to query, "left", "right", or "both" (default: "both")
         :return: Dictionary with transform, position, rotation, euler_xyz, quaternion_xyzw, output_to_ik. None if unavailable
         """
         if self.robot_model is None:
             logger.error("未安装 RoboCore 或未提供 robot_model，无法计算位姿")
             return None
-        arm = arm or self.default_arm
+        arm = arm or "both"
         if arm == "both":
-            joints_l = self.get_joints(arm="left_arm")
-            joints_r = self.get_joints(arm="right_arm")
+            joints_l = self.get_joints(arm="left")
+            joints_r = self.get_joints(arm="right")
             if not joints_l or not joints_r or not isinstance(joints_l, list) or not isinstance(joints_r, list):
                 logger.error("无法获取关节角度")
                 return None
@@ -425,7 +469,7 @@ class SynriaBessicaRobotAPI:
                 logger.error("无法获取关节角度")
                 return None
             
-            model = self.left_model if arm == "left_arm" else self.right_model
+            model = self.left_model if arm == "left" else self.right_model
             # Joint angles are already in radians from get_joints()
             T_fk = forward_kinematics(model, np.array(joints), return_end=True)
             pos = T_fk[:3, 3]
@@ -445,29 +489,55 @@ class SynriaBessicaRobotAPI:
     def print_state(self, arm: Optional[str] = None, continuous: bool = False, output_format: str = "rad"):
         """Print current robot state.
 
-        :param arm: Arm to query, "left_arm", "right_arm", or "both" (default: self.default_arm)
+        :param arm: Arm to query, "left", "right", or "both" (default: "both")
         :param continuous: Print continuously if True, once if False
         :param output_format: Angle format, 'deg' or 'rad' (default: 'rad')
         """
-        arm = arm or self.default_arm
+        arm = arm or "both"
         
         def _print_once(arm):
-            # Read all data first
-            joint_angles = self.get_joints(arm=arm)
-            if joint_angles is None:
-                logger.warning("无法获取关节角度")
+            """Print robot state once."""
+            # Get joint and gripper state together (like Alicia API)
+            state = self.get_robot_state("joint_gripper")
+            if state is None:
+                logger.warning("无法获取关节状态")
                 return
             
-            time.sleep(0.01)  # Small delay for data consistency
+            # Extract joint angles and gripper from state
+            # state is a dict with 'left' and 'right' JointState objects
+            if arm == "both":
+                if 'left' not in state or 'right' not in state:
+                    logger.warning("无法获取双臂关节状态")
+                    return
+                left_state = state['left']
+                right_state = state['right']
+                joint_angles = [left_state.angles, right_state.angles]
+                gripper = (left_state.gripper, right_state.gripper)
+            elif arm == "left":
+                if 'left' not in state:
+                    logger.warning("无法获取左臂关节状态")
+                    return
+                left_state = state['left']
+                joint_angles = left_state.angles
+                gripper = left_state.gripper
+            elif arm == "right":
+                if 'right' not in state:
+                    logger.warning("无法获取右臂关节状态")
+                    return
+                right_state = state['right']
+                joint_angles = right_state.angles
+                gripper = right_state.gripper
+            else:
+                logger.warning(f"Invalid arm parameter: {arm}")
+                return
             
+            # Get pose information
             pose = self.get_pose(arm=arm)
             if pose is None:
                 logger.warning("无法获取末端执行器位姿")
                 # Continue without pose data
             
-            gripper = self.get_gripper(arm=arm)
-            
-            # Format joints for printing
+            # Format conversion
             if output_format == 'deg':
                 unit = "°"
                 convert = 180.0 / np.pi
@@ -475,77 +545,104 @@ class SynriaBessicaRobotAPI:
                 unit = "rad"
                 convert = 1.0
             
-            # Display information grouped by arm (left first, then right)
+            # Display information grouped by arm
             if arm == "both":
-                # Dual arm mode: print all left arm info, then all right arm info
-                if isinstance(joint_angles, list) and len(joint_angles) == 2:
-                    left_joints = np.array(joint_angles[0])
-                    right_joints = np.array(joint_angles[1])
-                    
-                    # Left Arm Information
-                    left_joints_out = np.round(left_joints * convert, 2 if output_format == 'deg' else 3)
-                    logger.info(f"Left Arm 关节角度（{unit}): {left_joints_out.tolist()}")
-                    
-                    if pose is not None:
-                        quaternion = pose['quaternion_xyzw']
-                        position = pose['position']
-                        if isinstance(position, list) and len(position) == 2 and \
-                           isinstance(quaternion, list) and len(quaternion) == 2:
-                            pos_left = np.array(position[0])
-                            quat_left = np.array(quaternion[0])
-                            logger.info(f"Left Arm 位置(xyz /m): {np.round(pos_left, 3).tolist()}, "
-                                      f"四元数(qx, qy, qz, qw): {np.round(quat_left, 3).tolist()}")
-                    
-                    if gripper is not None and isinstance(gripper, tuple) and len(gripper) == 2:
-                        logger.info(f"Left Arm 夹爪状态 (deg): {gripper[0]:.2f}")
-                    
-                    # Right Arm Information
-                    right_joints_out = np.round(right_joints * convert, 2 if output_format == 'deg' else 3)
-                    logger.info(f"Right Arm 关节角度（{unit}): {right_joints_out.tolist()}")
-                    
-                    if pose is not None:
-                        quaternion = pose['quaternion_xyzw']
-                        position = pose['position']
-                        if isinstance(position, list) and len(position) == 2 and \
-                           isinstance(quaternion, list) and len(quaternion) == 2:
-                            pos_right = np.array(position[1])
-                            quat_right = np.array(quaternion[1])
-                            logger.info(f"Right Arm 位置(xyz /m): {np.round(pos_right, 3).tolist()}, "
-                                      f"四元数(qx, qy, qz, qw): {np.round(quat_right, 3).tolist()}")
-                    
-                    if gripper is not None and isinstance(gripper, tuple) and len(gripper) == 2:
-                        logger.info(f"Right Arm 夹爪状态 (deg): {gripper[1]:.2f}")
-                else:
-                    logger.warning(f"Unexpected joint angles format for both arms: {type(joint_angles)}")
+                _print_dual_arm_state(joint_angles, pose, gripper, convert, unit, output_format)
             else:
-                # Single arm mode: print all information for the specified arm
-                if isinstance(joint_angles, list) and len(joint_angles) == 7:
-                    joints_out = np.round(np.array(joint_angles) * convert, 2 if output_format == 'deg' else 3)
-                    logger.info(f"{arm.upper()} 关节角度（{unit}): {joints_out.tolist()}")
-                else:
-                    logger.warning(f"Unexpected joint angles format for {arm}: {type(joint_angles)}")
-                
-                if pose is not None:
-                    quaternion = pose['quaternion_xyzw']
-                    position = pose['position']
-                    pos = np.array(position)
-                    quat = np.array(quaternion)
-                    logger.info(f"{arm.upper()} 位置(xyz /m): {np.round(pos, 3).tolist()}, "
-                              f"四元数(qx, qy, qz, qw): {np.round(quat, 3).tolist()}")
-                
-                if gripper is not None:
-                    logger.info(f"{arm.upper()} 夹爪状态 (deg): {gripper:.2f}")
-                else:
-                    logger.warning("无法获取夹爪状态")
+                _print_single_arm_state(arm, joint_angles, pose, gripper, convert, unit, output_format)
             
             print("\n")
+        
+        def _print_dual_arm_state(joint_angles, pose, gripper, convert, unit, output_format):
+            """Print state for both arms."""
+            # Validate joint angles format
+            if not isinstance(joint_angles, list) or len(joint_angles) != 2:
+                logger.warning(f"Unexpected joint angles format for both arms: {type(joint_angles)}")
+                return
+            
+            left_joints = np.array(joint_angles[0])
+            right_joints = np.array(joint_angles[1])
+            
+            if len(left_joints) != 7 or len(right_joints) != 7:
+                logger.warning(f"Invalid joint angles length: left={len(left_joints)}, right={len(right_joints)}")
+                return
+            
+            # Left Arm Information
+            left_joints_out = np.round(left_joints * convert, 2 if output_format == 'deg' else 3)
+            logger.info(f"Left Arm 关节角度（{unit}): {left_joints_out.tolist()}")
+            
+            if pose is not None:
+                position = pose.get('position', [])
+                quaternion = pose.get('quaternion_xyzw', [])
+                if isinstance(position, list) and len(position) == 2 and \
+                   isinstance(quaternion, list) and len(quaternion) == 2:
+                    pos_left = np.array(position[0])
+                    quat_left = np.array(quaternion[0])
+                    # logger.info(f"Left Arm 位置(xyz /m): {np.round(pos_left, 3).tolist()}, "
+                    #           f"四元数(qx, qy, qz, qw): {np.round(quat_left, 3).tolist()}")
+            
+            # Display gripper (no conversion, already in 0-100 range like Alicia API)
+            if gripper is not None:
+                if isinstance(gripper, tuple) and len(gripper) == 2:
+                    logger.info(f"Left Arm 夹爪状态 (0-1000): {gripper[0]}")
+                else:
+                    logger.warning(f"Unexpected gripper format: {type(gripper)}")
+            
+            # Right Arm Information
+            right_joints_out = np.round(right_joints * convert, 2 if output_format == 'deg' else 3)
+            logger.info(f"Right Arm 关节角度（{unit}): {right_joints_out.tolist()}")
+            
+            if pose is not None:
+                position = pose.get('position', [])
+                quaternion = pose.get('quaternion_xyzw', [])
+                if isinstance(position, list) and len(position) == 2 and \
+                   isinstance(quaternion, list) and len(quaternion) == 2:
+                    pos_right = np.array(position[1])
+                    quat_right = np.array(quaternion[1])
+                    # logger.info(f"Right Arm 位置(xyz /m): {np.round(pos_right, 3).tolist()}, "
+                    #           f"四元数(qx, qy, qz, qw): {np.round(quat_right, 3).tolist()}")
+            
+            if gripper is not None:
+                if isinstance(gripper, tuple) and len(gripper) == 2:
+                    logger.info(f"Right Arm 夹爪状态 (0-100): {gripper[1]}")
+        
+        def _print_single_arm_state(arm, joint_angles, pose, gripper, convert, unit, output_format):
+            """Print state for single arm."""
+            # Validate joint angles format
+            if not isinstance(joint_angles, list) or len(joint_angles) != 7:
+                logger.warning(f"Unexpected joint angles format for {arm}: {type(joint_angles)}, length={len(joint_angles) if isinstance(joint_angles, list) else 'N/A'}")
+                return
+            
+            joints_out = np.round(np.array(joint_angles) * convert, 2 if output_format == 'deg' else 3)
+            arm_name = "Left" if arm == "left" else "Right"
+            logger.info(f"{arm_name} Arm 关节角度（{unit}): {joints_out.tolist()}")
+            
+            if pose is not None:
+                position = pose.get('position', [])
+                quaternion = pose.get('quaternion_xyzw', [])
+                if isinstance(position, (list, np.ndarray)) and isinstance(quaternion, (list, np.ndarray)):
+                    pos = np.array(position)
+                    quat = np.array(quaternion)
+                    arm_name = "Left" if arm == "left" else "Right"
+                    logger.info(f"{arm_name} Arm 位置(xyz /m): {np.round(pos, 3).tolist()}, "
+                              f"四元数(qx, qy, qz, qw): {np.round(quat, 3).tolist()}")
+            
+            # Display gripper (no conversion, already in 0-100 range like Alicia API)
+            if gripper is not None:
+                if isinstance(gripper, (int, float)):
+                    arm_name = "Left" if arm == "left" else "Right"
+                    logger.info(f"{arm_name} Arm 夹爪状态 (0-1000): {gripper}")
+                else:
+                    logger.warning(f"Unexpected gripper format for {arm}: {type(gripper)}")
+            else:
+                logger.warning("无法获取夹爪状态")
         
         if continuous:
             logger.info("开始连续状态打印，按 Ctrl+C 停止")
             try:
                 while True:
                     _print_once(arm)
-                    time.sleep(0.03)
+                    time.sleep(0.3)
             except KeyboardInterrupt:
                 logger.info("停止连续状态打印")
         else:
@@ -565,7 +662,7 @@ class SynriaBessicaRobotAPI:
         """Enable or disable torque control.
 
         :param command: Command string, 'on' to enable or 'off' to disable
-        :param arm: Arm to control, "left_arm", "right_arm", or "both"
+        :param arm: Arm to control, "left", "right", or "both"
         :return: True if successful
         """
         if command == 'on':
@@ -579,7 +676,7 @@ class SynriaBessicaRobotAPI:
     def set_zero(self, arm: str = 'both') -> bool:
         """Set zero position for specified arm(s).
 
-        :param arm: Arm to set zero, "left_arm", "right_arm", or "both"
+        :param arm: Arm to set zero, "left", "right", or "both"
         :return: True if successful
         """
         logger.info(f"即将将{arm}关闭扭矩，请确定环境正常,输入enter继续...")
@@ -590,6 +687,7 @@ class SynriaBessicaRobotAPI:
         input()
         result = self.servo_driver.set_zero_position(arm="both")
         self.torque_control(command="on", arm=arm)
+        
         logger.info(f"{arm}归零成功: {result}")
 
     # ==================== 云台控制 ====================
@@ -656,7 +754,7 @@ class SynriaBessicaRobotAPI:
         """Move robot along joint space trajectory to target.
 
         :param q_end: Target joint angles. For single arm: List[float] (7 angles). For dual arm: List[List[float]] (2x7 angles)
-        :param arm: Arm to control, "left_arm", "right_arm", or "both" (default: self.default_arm)
+        :param arm: Arm to control, "left", "right", or "both" (default: "both")
         :param duration: Trajectory duration in seconds
         :param method: Interpolation method, 'linear', 'cubic', or 'quintic'
         :param num_points: Number of trajectory points
@@ -664,7 +762,7 @@ class SynriaBessicaRobotAPI:
         :param visualize: Enable trajectory visualization (not implemented)
         :return: True if successful
         """
-        arm = arm or self.default_arm
+        arm = arm or "both"
         
         # 判断输入格式：一维数组还是二维数组
         is_dual_arm_input = False
@@ -676,7 +774,7 @@ class SynriaBessicaRobotAPI:
                 return False
         
         # 处理单臂模式
-        if arm in ("left_arm", "right_arm"):
+        if arm in ("left", "right"):
             if is_dual_arm_input:
                 logger.warning(f"单臂模式但输入了二维数组，使用第一个元素")
                 q_end = q_end[0]
@@ -787,8 +885,8 @@ class SynriaBessicaRobotAPI:
                 delay = duration / num_points
                 for q_left, q_right in zip(q_traj_left.tolist(), q_traj_right.tolist()):
                     # 同时发送左右臂指令
-                    success_left = self.servo_driver.set_joint_angles(q_left, arm="left_arm", wait_for_completion=False)
-                    success_right = self.servo_driver.set_joint_angles(q_right, arm="right_arm", wait_for_completion=False)
+                    success_left = self.servo_driver.set_joint_angles(q_left, arm="left", wait_for_completion=False)
+                    success_right = self.servo_driver.set_joint_angles(q_right, arm="right", wait_for_completion=False)
                     if not (success_left and success_right):
                         return False
                     time.sleep(delay)
@@ -802,8 +900,8 @@ class SynriaBessicaRobotAPI:
                     r = s / steps
                     q_left = [a + (b - a) * r for a, b in zip(q_start_left, q_end_left)]
                     q_right = [a + (b - a) * r for a, b in zip(q_start_right, q_end_right)]
-                    success_left = self.servo_driver.set_joint_angles(q_left, arm="left_arm", wait_for_completion=False)
-                    success_right = self.servo_driver.set_joint_angles(q_right, arm="right_arm", wait_for_completion=False)
+                    success_left = self.servo_driver.set_joint_angles(q_left, arm="left", wait_for_completion=False)
+                    success_right = self.servo_driver.set_joint_angles(q_right, arm="right", wait_for_completion=False)
                     if not (success_left and success_right):
                         return False
                     time.sleep(delay)
@@ -827,7 +925,7 @@ class SynriaBessicaRobotAPI:
         Requires robot_model and RoboCore; returns False if unavailable.
 
         :param target_pose: Target pose as [x, y, z, qx, qy, qz, qw]. For single arm: List[float] (7 elements). For dual arm: List[List[float]] (2x7 elements) or List[float] with target_pose_second_arm
-        :param arm: Arm to control, "left_arm", "right_arm", or "both" (default: self.default_arm)
+        :param arm: Arm to control, "left", "right", or "both" (default: "both")
         :param target_pose_second_arm: Target pose for second arm (required when arm="both" and target_pose is 1D)
         :param duration: Trajectory duration in seconds
         :param num_points: Number of trajectory points
@@ -839,7 +937,7 @@ class SynriaBessicaRobotAPI:
             logger.error("未提供 robot_model，无法执行笛卡尔轨迹")
             return False
         
-        arm = arm or self.default_arm
+        arm = arm or "both"
         
         # 判断输入格式
         is_dual_arm_input = False
@@ -856,7 +954,7 @@ class SynriaBessicaRobotAPI:
             return False
         
         # 处理单臂模式
-        if arm in ("left_arm", "right_arm"):
+        if arm in ("left", "right"):
             if is_dual_arm_input:
                 logger.warning(f"单臂模式但输入了二维数组，使用第一个元素")
                 target_pose = target_pose[0]
@@ -989,8 +1087,8 @@ class SynriaBessicaRobotAPI:
             delay = duration / num_points
             for q_left, q_right in zip(q_traj_left.tolist(), q_traj_right.tolist()):
                 # 同时发送左右臂指令
-                success_left = self.servo_driver.set_joint_angles(q_left, arm="left_arm", wait_for_completion=False)
-                success_right = self.servo_driver.set_joint_angles(q_right, arm="right_arm", wait_for_completion=False)
+                success_left = self.servo_driver.set_joint_angles(q_left, arm="left", wait_for_completion=False)
+                success_right = self.servo_driver.set_joint_angles(q_right, arm="right", wait_for_completion=False)
                 if not (success_left and success_right):
                     return False
                 time.sleep(delay)

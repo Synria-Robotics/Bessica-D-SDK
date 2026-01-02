@@ -123,19 +123,19 @@ if __name__ == "__main__":
     parser.add_argument('--baudrate', type=int, default=1000000,  help="波特率 (默认: 1000000)")
     parser.add_argument('--robot_version', type=str, default="v1_1",  help="机械臂版本 (默认: v1_1)")
 
-    parser.add_argument('--arm', type=str, default='left_arm',
-                        choices=['left_arm', 'right_arm', 'both'],
+    parser.add_argument('--arm', type=str, default='left',
+                        choices=['left', 'right', 'both'],
                         help='要查询的机械臂 (默认: both)')
     parser.add_argument('--variant', type=str, default='skeleton',
                         help='模型变体 (默认: skeleton)')
     parser.add_argument('--left-base-link', type=str, default='base_link',
                         help='左臂基座链接名称 (默认: base_link)')
-    parser.add_argument('--left-end-link', type=str, default='left_arm_link7',
+    parser.add_argument('--left-end-link', type=str, default='left_link7',
     # parser.add_argument('--left-end-link', type=str, default='left_tool0',
                         help='左臂末端执行器链接名称 (默认: left_tool0)')
     parser.add_argument('--right-base-link', type=str, default='base_link',
                         help='右臂基座链接名称 (默认: base_link)')
-    parser.add_argument('--right-end-link', type=str, default='right_arm_link7',
+    parser.add_argument('--right-end-link', type=str, default='right_link7',
     # parser.add_argument('--right-end-link', type=str, default='right_tool0',
                         help='右臂末端执行器链接名称 (默认: right_tool0)')
 
