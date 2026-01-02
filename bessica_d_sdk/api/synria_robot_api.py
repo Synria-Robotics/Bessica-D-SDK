@@ -137,109 +137,136 @@ class SynriaBessicaRobotAPI:
 
 
     # ==================== 关节控制 ====================
-    def set_home(self, arm: str = "both") -> bool:
+    def set_home(self, arm: str = "both", speed_deg_s: float = 20.0) -> bool:
         """Move robot to home position.
 
         :param arm: Arm to control, "left", "right", or "both"
+        :param speed_deg_s: Speed in degrees per second
         :return: True if successful
         """
-        logger.info(f"set_home at head: arm={arm}")
+        logger.info(f"set_home: arm={arm}")
         home_angles = [0.0] * 7
 
         if arm == "both":
-            # Dual-arm: use unified set_joint_target, joint_format in radians
-            success = self.set_joint_target(
+            # Dual-arm: use unified set_robot_state
+            return self.set_robot_state(
                 target_joints=[home_angles, home_angles],
+                gripper_value=[1000, 1000],  # Open both grippers
                 arm="both",
                 joint_format="rad",
-                wait=False,
-                tolerance=0.05,
+                speed_deg_s=speed_deg_s,
+                wait_for_completion=True,
             )
-            success &= self.set_gripper_target(command="open", arm="both")
-            return success
 
         elif arm in ("left", "right"):
             # Single arm: move to home and open gripper
-            ok = self.set_joint_target(
+            return self.set_robot_state(
                 target_joints=home_angles,
+                gripper_value=1000,  # Open gripper
                 arm=arm,
                 joint_format="rad",
-                wait=False,
-                tolerance=0.05,
+                speed_deg_s=speed_deg_s,
+                wait_for_completion=True,
             )
-            ok &= self.set_gripper_target(command="open", arm=arm)
-            return ok
 
         else:
             logger.error(f"set_home: 非法 arm={arm}")
             return False
 
-    def set_joint_target(
+    def set_robot_state(
         self,
-        target_joints: Union[List[float], List[List[float]]],
+        target_joints: Optional[Union[List[float], List[List[float]]]] = None,
+        gripper_value: Optional[Union[float, List[float], Tuple[float, float]]] = None,
         arm: Optional[str] = None,
         joint_format: str = "rad",
-        wait: bool = False,
+        speed_deg_s: float = 20.0,
         tolerance: float = 0.0524,
+        timeout: float = 10.0,
+        wait_for_completion: bool = True,
     ) -> bool:
-        """Move robot to target joint angles.
+        """Set joint angles and/or gripper in a single combined command.
 
-        :param target_joints: Target joint angles. For single arm: List[float] (7 angles). For dual arm: List[List[float]] (2x7 angles)
+        :param target_joints: Optional target joint angles. 
+            - For single arm: List[float] (7 angles). If None, keeps current
+            - For dual arm: List[List[float]] (2x7 angles). If None, keeps current
+        :param gripper_value: Optional gripper value (0-1000, where 1000 is fully open).
+            - For single arm: float. If None, keeps current
+            - For dual arm: List[float] or Tuple[float, float] (left, right). If None, keeps current
         :param arm: Arm to control, "left", "right", or "both" (default: "both")
-        :param joint_format: Unit format, "deg" or "rad" (default: "rad")
-        :param wait: Wait for motion completion if True
-        :param tolerance: Maximum allowed error per joint in same unit as joint_format (default: 0.0524 rad ≈ 3.0 deg)
-        :return: True if command sent successfully
+        :param joint_format: Unit format for joints, "deg" or "rad" (default: "rad")
+        :param speed_deg_s: Speed in degrees per second (default: 20.0)
+        :param tolerance: Maximum allowed error per joint in radians (default: 0.0524 rad ≈ 3.0 deg)
+        :param timeout: Maximum wait time in seconds (default: 10.0)
+        :param wait_for_completion: If True, wait until target reached (default: True)
+        :return: True if successful, False otherwise
         """
         arm = arm or "both"
+        
+        # Validate and convert joint format
         is_deg = joint_format.lower() in ("deg", "degree", "degrees")
         is_rad = joint_format.lower() in ("rad", "radian", "radians")
         
         if not (is_deg or is_rad):
-            logger.error(f"set_joint_target: joint_format 必须是 'deg' 或 'rad'，当前: {joint_format}")
+            logger.error(f"set_robot_state: joint_format 必须是 'deg' 或 'rad'，当前: {joint_format}")
             return False
         
-        # Convert to radians if needed
         convert = self.servo_driver.DEG_TO_RAD if is_deg else 1.0
-        tolerance_rad = tolerance * convert if is_deg else tolerance
         
-        if arm == "both":
-            if not isinstance(target_joints, list) or len(target_joints) != 2:
-                logger.error("set_joint_target: arm='both' 时，target_joints 必须是包含2个列表的列表")
-                return False
-            
-            target_left, target_right = target_joints[0], target_joints[1]
-            if not (isinstance(target_left, list) and len(target_left) == 7 and 
-                    isinstance(target_right, list) and len(target_right) == 7):
-                logger.error("set_joint_target: 左右臂都必须提供7个关节角度")
-                return False
-            
-            target_left_rad = [a * convert for a in target_left]
-            target_right_rad = [a * convert for a in target_right]
-            
-            success = self.servo_driver.set_joint_angles(
-                joint_angles=target_left_rad, arm="left", 
-                wait_for_completion=wait, tolerance=tolerance_rad
-            )
-            success &= self.servo_driver.set_joint_angles(
-                joint_angles=target_right_rad, arm="right", 
-                wait_for_completion=wait, tolerance=tolerance_rad
-            )
-            return success
-            
-        elif arm in ("left", "right"):
-            if not isinstance(target_joints, list) or len(target_joints) != 7:
-                logger.error(f"set_joint_target: 单臂模式必须提供7个关节角度，但得到 {len(target_joints) if isinstance(target_joints, list) else '非列表'}")
-                return False
-            
-            target_rad = [a * convert for a in target_joints]
-            return self.servo_driver.set_joint_angles(
-                joint_angles=target_rad, arm=arm, 
-                wait_for_completion=wait, tolerance=tolerance_rad
-            )
-        else:
-            logger.error(f"set_joint_target: 非法 arm={arm}")
+        # Convert joints to radians if needed
+        if target_joints is not None:
+            if arm == "both":
+                if not isinstance(target_joints, list) or len(target_joints) != 2:
+                    logger.error("set_robot_state: arm='both' 时，target_joints 必须是包含2个列表的列表")
+                    return False
+                if is_deg:
+                    target_joints = [[a * convert for a in target_joints[0]], 
+                                    [a * convert for a in target_joints[1]]]
+            elif arm in ("left", "right"):
+                if not isinstance(target_joints, list) or len(target_joints) != 7:
+                    logger.error(f"set_robot_state: 单臂模式必须提供7个关节角度，但得到 {len(target_joints) if isinstance(target_joints, list) else '非列表'}")
+                    return False
+                if is_deg:
+                    target_joints = [a * convert for a in target_joints]
+        
+        # Normalize gripper value format
+        if gripper_value is not None:
+            if arm == "both":
+                if isinstance(gripper_value, (list, tuple)) and len(gripper_value) == 2:
+                    gripper_value = list(gripper_value)
+                else:
+                    # If single value provided for both arms, use it for both
+                    gripper_value = [float(gripper_value), float(gripper_value)]
+            else:
+                # Single arm: ensure it's a float
+                if isinstance(gripper_value, (list, tuple)):
+                    logger.warning(f"单臂模式但提供了列表形式的gripper_value，使用第一个值")
+                    gripper_value = float(gripper_value[0])
+                else:
+                    gripper_value = float(gripper_value)
+        
+        # Use unified method in servo_driver
+        success = self.servo_driver.set_joint_and_gripper(
+            joint_angles=target_joints,
+            gripper_value=gripper_value,
+            arm=arm,
+            speed_deg_s=speed_deg_s
+        )
+        
+        if not success:
+            logger.error("Failed to set robot target")
             return False
+        
+        # Wait for completion if requested
+        if wait_for_completion and target_joints is not None:
+            return self._wait_for_joint_target(
+                target_joints=target_joints,
+                arm=arm,
+                tolerance=tolerance,
+                timeout=timeout,
+                log_prefix="等待关节接近目标"
+            )
+        
+        return True
 
     def set_pose_target(self,
                         target_pose1: List[float],
@@ -301,7 +328,7 @@ class SynriaBessicaRobotAPI:
             # Execute motion if requested
             if execute and result.get('success', False):
                 print(f"result: {result}")
-                self.set_joint_target(result['q'], arm=arm, wait=False, joint_format="rad")
+                self.set_robot_state(target_joints=result['q'], arm=arm, joint_format="rad", wait_for_completion=False)
             
             return result
         
@@ -330,7 +357,7 @@ class SynriaBessicaRobotAPI:
             
             # Execute motion if requested
             if execute and ik_result.get('success_left', False) and ik_result.get('success_right', False):
-                self.set_joint_target([ik_result['q_left'], ik_result['q_right']], arm="both", wait=False)
+                self.set_robot_state(target_joints=[ik_result['q_left'], ik_result['q_right']], arm="both", wait_for_completion=False)
             
             return {
                 'success': ik_result.get('success_left', False) and ik_result.get('success_right', False),
@@ -349,47 +376,6 @@ class SynriaBessicaRobotAPI:
 
 
     # ==================== 夹爪控制 ====================
-    def set_gripper_target(
-        self,
-        arm: str,
-        command: Optional[str] = None,
-        value: Optional[float] = None,
-        wait_for_completion: bool = False,
-        timeout: float = 1.0,
-        tolerance: float = 0.1,
-    ) -> bool:
-        """Control gripper position.
-
-        :param arm: Arm to control, "left", "right", or "both"
-        :param command: Command string, 'open' or 'close'
-        :param value: Gripper value in degrees, 0 (closed) to 100 (open)
-        :param wait_for_completion: Wait until gripper reaches target
-        :param timeout: Maximum wait time in seconds
-        :param tolerance: Acceptable difference to target value in degrees
-        :return: True if successful
-        """
-        arm = arm or "both"
-        if (command is None) == (value is None):
-            logger.error("必须二选一提供 command 或 value")
-            return False
-        if command is not None:
-            if command == 'open':
-                value = 0.1
-            elif command == 'close':
-                value = 99.9
-            else:
-                logger.error("command 仅支持 'open'/'close'")
-                return False
-        if value is None:
-            logger.error("必须提供 command 或 value 之一")
-            return False
-        if arm in ("left", "right"):
-            return self.servo_driver.set_gripper_deg(arm=arm, angle_deg=float(value), wait=wait_for_completion)
-        elif arm == "both":
-            return self.servo_driver.set_gripper_deg(angle_deg=float(value), arm="both", wait=wait_for_completion)
-        else:
-            logger.error(f"set_gripper_target: 非法 arm={arm}")
-            return False
 
     # ==================== 位姿与状态 ====================
     def get_joints(self, arm: Optional[str] = None) -> Optional[Union[List[float], List[List[float]]]]:
@@ -1099,6 +1085,70 @@ class SynriaBessicaRobotAPI:
 
     # ==================== 辅助方法 ====================
 
+    def _wait_for_joint_target(
+        self,
+        target_joints: Optional[Union[List[float], List[List[float]]]],
+        arm: str,
+        tolerance: float,
+        timeout: float,
+        log_prefix: str = "等待关节接近目标"
+    ) -> bool:
+        """Wait until all joints reach target angles.
+
+        :param target_joints: Target joint angles in radians. 
+            - For single arm: List[float] (7 angles)
+            - For dual arm: List[List[float]] (2x7 angles)
+            - If None, returns True immediately
+        :param arm: Arm to wait for, "left", "right", or "both"
+        :param tolerance: Rad, acceptable abs distance to target for all joints
+        :param timeout: Seconds, maximum wait time
+        :param log_prefix: Log message prefix
+        :return: True if target reached, False if timeout
+        """
+        if target_joints is None:
+            logger.debug("No joint target specified, skip joint waiting.")
+            return True
+
+        start_time = time.time()
+
+        while time.time() - start_time < timeout:
+            current_joints = self.get_joints(arm=arm)
+            if current_joints is None:
+                time.sleep(0.01)
+                continue
+
+            if arm == "both":
+                if not isinstance(target_joints, list) or len(target_joints) != 2:
+                    logger.error("Invalid target_joints format for both arms")
+                    return False
+                if not isinstance(current_joints, list) or len(current_joints) != 2:
+                    time.sleep(0.01)
+                    continue
+                
+                # Check both arms
+                left_reached = all(abs(a - b) <= tolerance for a, b in zip(current_joints[0], target_joints[0]))
+                right_reached = all(abs(a - b) <= tolerance for a, b in zip(current_joints[1], target_joints[1]))
+                if left_reached and right_reached:
+                    return True
+            else:
+                if not isinstance(target_joints, list) or len(target_joints) != 7:
+                    logger.error(f"Invalid target_joints format for {arm} arm")
+                    return False
+                if not isinstance(current_joints, list) or len(current_joints) != 7:
+                    time.sleep(0.01)
+                    continue
+                
+                if all(abs(a - b) <= tolerance for a, b in zip(current_joints, target_joints)):
+                    return True
+            
+            time.sleep(0.01)
+
+        logger.warning(f"{log_prefix}超时")
+        current_joints = self.get_joints(arm=arm)
+        logger.warning(f"目标关节角度: {target_joints}")
+        logger.warning(f"当前关节角度: {current_joints}")
+        return False
+
     def _generate_random_q(self, scale: float = 0.5) -> List[float]:
         """Generate random joint configuration within limits.
 
@@ -1125,4 +1175,57 @@ class SynriaBessicaRobotAPI:
             q[js.index] = float(rng.uniform(mid - span, mid + span))
 
         return q
+
+    def _get_gripper_type_with_cache(self, timeout: float = 1.0) -> Optional[str]:
+        """Get gripper type with caching support.
+        
+        First tries to load from JSON cache, then queries hardware if needed.
+        Returns None with warning if hardware query fails (non-critical).
+        
+        :param timeout: Maximum time to wait for hardware response in seconds
+        :return: Gripper type name (e.g., "50mm" or "100mm"), or None if unavailable
+        """
+        # JSON file path in the same folder as this module
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        json_file_path = os.path.join(current_dir, "gripper_type.json")
+        
+        # 1) Try to load cached gripper type from JSON file (no serial communication)
+        if os.path.exists(json_file_path):
+            try:
+                with open(json_file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                cached_type = data.get("type_name")
+                if isinstance(cached_type, str) and cached_type:
+                    return cached_type
+            except Exception as e:
+                logger.warning(f"Failed to load cached gripper type from JSON, will try hardware query: {e}")
+        
+        # 2) If no valid cache, actively query hardware
+        # Try with wait=True first to get response reliably
+        if not self.servo_driver.acquire_info("gripper_type", wait=True, timeout=timeout):
+            logger.warning("Failed to get gripper_type data within timeout period")
+            return None
+        
+        result = self.data_parser.get_info("gripper_type")
+        if result is None:
+            logger.warning("Gripper type (50mm or 100mm) should be defined by parameters")
+            return None
+        
+        # Save to JSON file for future use
+        self._save_gripper_type_to_json(result)
+        
+        return result
+    
+    def _save_gripper_type_to_json(self, gripper_type: str):
+        """Save gripper type to JSON file in the same folder as this module."""
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        json_file_path = os.path.join(current_dir, "gripper_type.json")
+        
+        try:
+            with open(json_file_path, 'w', encoding='utf-8') as f:
+                json.dump({"type_name": gripper_type}, f, indent=2, ensure_ascii=False)
+            if hasattr(self.servo_driver, 'debug_mode') and self.servo_driver.debug_mode:
+                logger.debug(f"Saved gripper type '{gripper_type}' to {json_file_path}")
+        except Exception as e:
+            logger.error(f"Failed to save gripper type to JSON file: {e}")
 

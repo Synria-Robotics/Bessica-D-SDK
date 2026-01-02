@@ -34,8 +34,8 @@ dependencies = [
     "omegaconf>=2.3.0",
     "pythoncrc",
     "pycrc",
-    "robocore @ git+https://github.com/Synria-Robotics/RoboCore.git@v2.0.0",
-    "synriard @ git+https://github.com/Synria-Robotics/Synria-Robot-Descriptions.git", 
+    #"robocore @ git+https://github.com/Synria-Robotics/RoboCore.git@v2.0.0",
+    #"synriard @ git+https://github.com/Synria-Robotics/Synria-Robot-Descriptions.git", 
 ]
 
 [project.urls]

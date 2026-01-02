@@ -1,13 +1,14 @@
 """
-Demo: Gripper control
+Demo: Gripper control using unified set_robot_state API
 
 Copyright (c) 2025 Synria Robotics Co., Ltd.
 Licensed under GPL v3.0
 
 Features:
-- Open/close gripper
-- Control gripper to specific angle
-- Wait for gripper motion completion
+- Open/close gripper (value 0-1000, where 1000 is fully open)
+- Control gripper to specific value
+- Support single arm and dual arm control
+- Unified API for joint and gripper control
 """
 
 import bessica_d_sdk
@@ -31,9 +32,23 @@ def main(args):
         if not robot.connect():
             print("✗ Connection failed, please check serial port settings")
             return
-        robot.set_gripper_target(arm=args.arm, command='open', wait_for_completion=False)
+        
+        # Open gripper (value 1000 = fully open)
+        robot.set_robot_state(
+            target_joints=None,  # Keep current joints
+            gripper_value=1000,  # Fully open
+            arm=args.arm,
+            wait_for_completion=False,
+        )
         time.sleep(2)
-        robot.set_gripper_target(arm=args.arm, command='close', wait_for_completion=False)
+        
+        # Close gripper (value 0 = fully closed)
+        robot.set_robot_state(
+            target_joints=None,  # Keep current joints
+            gripper_value=0,  # Fully closed
+            arm=args.arm,
+            wait_for_completion=False,
+        )
         time.sleep(2)
     
     except KeyboardInterrupt:
@@ -51,7 +66,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Gripper Control Demo")
     
     # Serial port settings
-    parser.add_argument('--port', type=str, default="", help="串口端口 (例如: /dev/ttyUSB0 或 COM3)")
+    parser.add_argument('--port', type=str, default="", help="串口端口 (例如: /dev/ttyACM0 或 COM3)")
     parser.add_argument('--robot_version', type=str, default="v1_0",  help="机械臂版本 (默认: v1_0)")
     parser.add_argument('--arm', type=str, default="both", choices=["left", "right", "both"], help="机械臂 (默认: both)")
     args = parser.parse_args()

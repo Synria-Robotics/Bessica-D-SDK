@@ -51,6 +51,7 @@ class ServoDriver:
     FUNC_JOINT_BOTH = 0x03     # 双臂关节控制
     FUNC_JOINT_RIGHT = 0x04    # 右臂关节控制
     FUNC_JOINT_LEFT = 0x05     # 左臂关节控制
+    FUNC_GRIPPER_ONLY = 0x06   # 仅夹爪控制（双臂）
 
     # 识别帧
     PRESENT_POSITION = 0x38 #当前机械臂关节角度识别帧
@@ -329,157 +330,57 @@ class ServoDriver:
             success = self.serial_comm.send_data(command)
             return success
 
-    def read_gripper_data(self, arm: str = 'both') -> Union[float, Tuple[float, float]]:
-        """
-        读取机械臂夹爪的当前角度（单位：弧度）
-
-        Args:
-            arm (str, optional): 指定要读取的机械臂，可选值为 "left" 或 "right"。
-                                若为 both，则同时返回左右两个机械臂的夹爪角度。
-
-        Returns:
-            Union[float, Tuple[float, float]]:
-                - 若指定 arm，则返回该机械臂的夹爪角度（float）。
-                - 若未指定 arm，则返回一个元组 (left_gripper, right_gripper)。
-        """
-        joint_states = self.data_parser.get_joint_state(arm)
-
-        if arm == 'both':
-            return (joint_states['left'].gripper,
-                    joint_states['right'].gripper)
-            
-        else:
-            return joint_states.gripper
 
     
     
-    def read_joint_state(self, arm: str = 'both') -> Optional[Union[JointState, JointStateDict]]:
+
+
+
+    def set_joint_and_gripper(
+        self,
+        joint_angles: Optional[Union[List[float], List[List[float]]]] = None,
+        gripper_value: Optional[Union[float, List[float], Tuple[float, float]]] = None,
+        arm: str = "both",
+        speed_deg_s: float = 20.0,
+    ) -> bool:
         """
-        读取机械臂的所有信息。
-
-        Returns:
-            Optional[Union[JointState, JointStateDict]]:
-                - 若指定 arm，则返回一个 JointState 对象。
-                - 若未指定 arm，则返回一个包含两个 JointState 对象的元组：shape = (2, 7)，
-                结构为 [left_joint_state, right_joint_state]
-                - 若读取失败，则返回 None。
+        Unified method to set joints, gripper, or both in a single combined frame.
+        
+        协议: AA 06 FUNC_CODE LEN DATA CHECK FF
+        - 单臂: FUNC=0x04(右臂)或0x05(左臂), LEN=0x20 (32 bytes) = 7 joints * 4 + 1 gripper * 4
+        - 双臂: FUNC=0x03, LEN=0x40 (64 bytes) = 右臂7关节*4 + 左臂7关节*4 + 左夹爪*4 + 右夹爪*4
+        - 仅夹爪: FUNC=0x06, LEN=0x08 (8 bytes) = 左夹爪*4 + 右夹爪*4
+        
+        :param joint_angles: Optional angle list (radians).
+            - Single arm: List[float] (7 angles). If None, keeps current joints
+            - Dual arm: List[List[float]] (2x7 angles). If None, keeps current joints
+        :param gripper_value: Optional gripper value (0-1000, where 1000 is fully open).
+            - Single arm: float. If None, keeps current gripper
+            - Dual arm: List[float] or Tuple[float, float] (left, right). If None, keeps current grippers
+        :param arm: Arm to control, "left", "right", or "both" (default: "both")
+        :param speed_deg_s: Speed in degrees per second (default: 20.0)
+        :return: True if successful
         """
-        return self.data_parser.get_joint_state(arm)
-
-    def read_joint_angles(self,arm: str = '') -> Optional[Union[JointState, JointStateDict]]:
-        """
-        """
-        if arm in ["left", "right"]:
-            return self.data_parser.get_joint_state(arm).angles
-        if arm == "both":
-            return [self.data_parser.get_joint_state(arm="left").angles,
-                    self.data_parser.get_joint_state(arm="right").angles]
-        return None
-
-
-    def set_joint_angles(self,
-                        joint_angles: Union[List[float], List[List[float]]],
-                        arm: str = None,
-                        gripper_angle: float = None,
-                        wait_for_completion: bool = True,
-                        timeout: float = 5.0,
-                        tolerance: float = 0.0524) -> bool:
-        """
-        设置机械臂关节角度（单位：弧度）
-
-        支持：
-        - 单臂：joint_angles 为 List[float] (7个角度), arm 为 "left" 或 "right"
-        - 双臂：joint_angles 为 List[List[float]] (2x7角度), arm 为 "both"
-
-        Args:
-            joint_angles: 单臂：长度为 7 的列表；双臂：长度为 2 的列表，每个元素为 7 个角度
-            arm: "left", "right", 或 "both"
-            gripper_angle: 单臂夹爪控制（暂未实现）
-            wait_for_completion: 是否等待运动完成
-            timeout: 最大等待时间
-            tolerance: 每个关节允许的最大误差（弧度）
-
-        Returns:
-            bool: 是否发送和完成成功
-        """
-        if not arm:
-            logger.error(f"请输入想要控制的机械臂，当前arm = {arm}")
+        if speed_deg_s <= 0:
+            logger.error(f"Speed must be positive: {speed_deg_s} deg/s")
             return False
-        
-        # 判断是单臂还是双臂
-        is_dual = isinstance(joint_angles, list) and len(joint_angles) == 2 and isinstance(joint_angles[0], list)
-        
-        if is_dual:
-            if arm != 'both':
-                logger.error(f"双臂模式时arm必须为'both'，当前: {arm}")
-                return False
-        else:
-            if arm not in ['left', 'right']:
-                logger.error(f"单臂模式时arm必须为'left'或'right'，当前: {arm}")
-                return False
-            if not isinstance(joint_angles, list) or len(joint_angles) != self.joint_count:
-                logger.error(f"{arm}：关节角度数量必须为 {self.joint_count}，当前: {len(joint_angles) if isinstance(joint_angles, list) else '非列表'}")
-                return False
 
-        frame = self._build_joint_frame(joint_angles, arm=arm)
+        frame = self._build_joint_and_gripper_frame(
+            joint_angles=joint_angles,
+            gripper_value=gripper_value,
+            arm=arm,
+            speed_deg_s=speed_deg_s
+        )
+
         if not frame:
             return False
+
+        if self.debug_mode:
+            hex_print(logger, "Send combined joint+gripper control", frame)
+
         result = self.serial_comm.send_data(frame)
         return result
 
-    
-    def set_gripper(self, 
-                    angle_rad: float, 
-                    arm: str,
-                    wait_for_completion: bool = True, 
-                    timeout: float = 5.0, 
-                    tolerance: float = 0.1) -> bool:
-        """
-        设置夹爪角度（弧度）
-
-        Args:
-            angle_rad: 单臂夹爪角度（用于指定 arm）
-            arm: 
-                - "left" or "right": 控制指定机械臂夹爪
-            wait_for_completion: 是否等待夹爪运动完成
-            timeout: 超时时间（秒）
-            tolerance: 误差容忍范围（弧度）
-
-        Returns:
-            bool: 命令是否成功发送和执行
-        """
-        # 校验输入
-        if not isinstance(angle_rad, (int, float)):
-            logger.error(f"{arm} 模式下 angle_rad 应为 float 类型")
-            return False
-            
-        # 构造夹爪控制帧
-        frame = self._build_gripper_frame(angle_rad, arm=arm)
-        
-        # 发送夹爪控制命令
-        # frame_hex = " ".join([f"{byte:02X}" for byte in frame])
-        # print("frame gripper: ", frame_hex)
-        result = self.serial_comm.send_data(frame)
-        
-        if not wait_for_completion or not result:
-            return result
-
-        # === 等待运动完成 ===
-        start_time = time.time()
-
-        if self.debug_mode:
-            logger.info(f"等待 {arm} 夹爪运动到目标位置: {round(angle_rad * self.RAD_TO_DEG, 2)}°")
-
-        while time.time() - start_time < timeout:
-            gripper_now = self.data_parser.get_joint_state(arm).gripper
-            if abs(gripper_now - angle_rad) <= tolerance:
-                if self.debug_mode:
-                    logger.debug(f"{arm} 夹爪已到达目标位置")
-                return True
-            time.sleep(0.01)
-
-        # logger.warning(f"{arm} 夹爪运动完成超时")
-        return False
 
     # ======================== 云台控制 ========================
     def set_gimbal(self,
@@ -604,61 +505,316 @@ class ServoDriver:
         return result
     
     
-    def _build_joint_frame(self, 
-                       joint_angles: Union[List[float], List[List[float]]],
-                       arm: str = None) -> List[int]:
+    def _build_joint_and_gripper_frame(
+        self,
+        joint_angles: Optional[Union[List[float], List[List[float]]]] = None,
+        gripper_value: Optional[Union[float, List[float], Tuple[float, float]]] = None,
+        arm: str = "both",
+        speed_deg_s: float = 20.0,
+    ) -> Optional[List[int]]:
         """
-        构建关节控制帧 (支持单臂/双臂)
+        Build combined joint + gripper + speed control frame
+        
         协议: AA 06 FUNC_CODE LEN DATA CHECK FF
-          FUNC_CODE: 0x03(双臂), 0x04(右臂), 0x05(左臂)
-          DATA: 关节角度数据 (每关节2字节 little-endian)
+        
+        单臂控制:
+        - 指令: 0x06
+        - 功能码: 0x04(右臂)或0x05(左臂)
+        - 数据长度: 0x20 (32 bytes) = 单臂7关节角度、速度(28 bytes) + 夹爪角度、速度(4 bytes)
+        - 数据格式: 关节角度 + 速度（每个关节4字节）+ 夹爪角度 + 速度（4字节）
+        
+        双臂控制:
+        - 指令: 0x06
+        - 功能码: 0x03
+        - 数据长度: 0x40 (64 bytes) = 右臂7关节*4 + 左臂7关节*4 + 左夹爪*4 + 右夹爪*4
+        - 数据格式: 关节角度 + 速度（每个关节4字节）数据低位在前高位在后
+        
+        仅夹爪控制:
+        - 指令: 0x06
+        - 功能码: 0x06
+        - 数据长度: 0x08 (8 bytes) = 左右夹爪角度、速度
+        - 数据格式: 夹爪角度 + 速度（每个夹爪4字节）数据低位在前高位在后
+        
+        :param joint_angles: Optional angle list (radians)
+        :param gripper_value: Optional gripper value (0-1000)
+        :param arm: Arm to control, "left", "right", or "both"
+        :param speed_deg_s: Speed in degrees per second
+        :return: Frame byte list or None if error
         """
-        # 确定是单臂还是双臂
-        is_dual = isinstance(joint_angles, list) and len(joint_angles) == 2 and isinstance(joint_angles[0], list)
+        # Convert speed to hardware value (0-5000, where 5000 is max speed)
+        speed_hw_value = self._deg_s_to_hardware_speed(speed_deg_s)
+        logger.info(f"speed_hw_value: {speed_hw_value}")
+        # Get current state for optional values
+        current_state = self.data_parser.get_joint_state(arm)
         
-        if is_dual:
-            if arm != 'both':
-                logger.error("双臂模式时arm必须为'both'")
-                return []
-            if len(joint_angles[0]) != 7 or len(joint_angles[1]) != 7:
-                logger.error("双臂模式需要左右各7个关节角度")
-                return []
-            func_code = self.FUNC_JOINT_BOTH
-            # 处理双臂数据: 右臂 + 左臂
-            right_angles = [joint_angles[0][i] * self.direction_map['right'][i] for i in range(7)]
-            left_angles = [joint_angles[1][i] * self.direction_map['left'][i] for i in range(7)]
-            data_bytes = self._angles_to_bytes(right_angles) + self._angles_to_bytes(left_angles)
+        # Handle gripper-only case (both arms, no joints)
+        if arm == "both" and joint_angles is None and gripper_value is not None:
+            # Gripper-only control: FUNC=0x06, LEN=0x08
+            DATA_LENGTH = 0x08
+            FRAME_SIZE = 1 + 1 + 1 + 1 + DATA_LENGTH + 1 + 1
+            
+            frame = [0] * FRAME_SIZE
+            frame[0] = self.FRAME_HEADER  # 0xAA
+            frame[1] = self.CMD_DUAL_ARM  # 0x06
+            frame[2] = self.FUNC_GRIPPER_ONLY  # 0x06
+            frame[3] = DATA_LENGTH
+            frame[-1] = self.FRAME_FOOTER  # 0xFF
+            
+            # Normalize gripper values
+            if isinstance(gripper_value, (list, tuple)) and len(gripper_value) == 2:
+                left_gripper = float(gripper_value[0])
+                right_gripper = float(gripper_value[1])
+            else:
+                left_gripper = right_gripper = float(gripper_value)
+            
+            # Clamp gripper values to 0-1000
+            left_gripper = max(0, min(1000, int(left_gripper)))
+            right_gripper = max(0, min(1000, int(right_gripper)))
+            
+            # Write left gripper (4 bytes: 2 bytes value + 2 bytes speed)
+            gripper_speed_hw_value = 5500
+
+            frame[4] = left_gripper & 0xFF
+            frame[5] = (left_gripper >> 8) & 0xFF
+            frame[6] = gripper_speed_hw_value & 0xFF
+            frame[7] = (gripper_speed_hw_value >> 8) & 0xFF
+            
+            # Write right gripper (4 bytes: 2 bytes value + 2 bytes speed)
+            frame[8] = right_gripper & 0xFF
+            frame[9] = (right_gripper >> 8) & 0xFF
+            frame[10] = gripper_speed_hw_value & 0xFF
+            frame[11] = (gripper_speed_hw_value >> 8) & 0xFF
+            
+            # Calculate checksum
+            frame[-2] = self.serial_comm.calculate_checksum(frame[1:-2])
+            
+            if self.debug_mode:
+                logger.debug(f"Built gripper-only frame - left: {left_gripper}, right: {right_gripper}, speed: {speed_deg_s} deg/s")
+            
+            return frame
+        
+        if arm == "both":
+            # Dual arm mode: 
+            # Protocol supports 0x1C (28 bytes, joints only) or 0x40 (64 bytes, joints + grippers)
+            # For 灵越系列, always use 0x40 as it includes: 右臂7关节 + 左臂7关节 + 左右夹爪
+            # 0x1C = 28 bytes = 右臂7关节*4 + 左臂7关节*4 (no grippers)
+            # 0x40 = 64 bytes = 右臂7关节*4 + 左臂7关节*4 + 左夹爪*4 + 右夹爪*4
+            DATA_LENGTH = 0x40
+            FRAME_SIZE = 1 + 1 + 1 + 1 + DATA_LENGTH + 1 + 1  # header + cmd + func + len + data + checksum + footer
+            
+            frame = [0] * FRAME_SIZE
+            frame[0] = self.FRAME_HEADER  # 0xAA
+            frame[1] = self.CMD_DUAL_ARM  # 0x06
+            frame[2] = self.FUNC_JOINT_BOTH  # 0x03
+            frame[3] = DATA_LENGTH
+            frame[-1] = self.FRAME_FOOTER  # 0xFF
+            
+            data_start = 4
+            
+            # Get effective joint angles
+            if joint_angles is None:
+                if current_state and isinstance(current_state, dict):
+                    left_js = current_state.get('left')
+                    right_js = current_state.get('right')
+                    effective_joints_left = left_js.angles if left_js and hasattr(left_js, 'angles') and left_js.angles else [0.0] * 7
+                    effective_joints_right = right_js.angles if right_js and hasattr(right_js, 'angles') and right_js.angles else [0.0] * 7
+                else:
+                    effective_joints_left = [0.0] * 7
+                    effective_joints_right = [0.0] * 7
+            else:
+                if not isinstance(joint_angles, list) or len(joint_angles) != 2:
+                    logger.error("Dual arm mode requires joint_angles as List[List[float]] with 2x7 angles")
+                    return None
+                effective_joints_left = joint_angles[1]  # Left arm
+                effective_joints_right = joint_angles[0]  # Right arm (protocol: right first)
+            
+            # Apply direction mapping
+            right_angles = [effective_joints_right[i] * self.direction_map['right'][i] for i in range(7)]
+            left_angles = [effective_joints_left[i] * self.direction_map['left'][i] for i in range(7)]
+            
+            # Write right arm joints (7 joints * 4 bytes)
+            offset = data_start
+            for joint_idx in range(7):
+                angle_rad = right_angles[joint_idx]
+                hw_value = self._rad_to_hardware_value(angle_rad)
+                frame[offset] = hw_value & 0xFF
+                frame[offset + 1] = (hw_value >> 8) & 0xFF
+                frame[offset + 2] = speed_hw_value & 0xFF
+                frame[offset + 3] = (speed_hw_value >> 8) & 0xFF
+                offset += 4
+            
+            # Write left arm joints (7 joints * 4 bytes)
+            for joint_idx in range(7):
+                angle_rad = left_angles[joint_idx]
+                hw_value = self._rad_to_hardware_value(angle_rad)
+                frame[offset] = hw_value & 0xFF
+                frame[offset + 1] = (hw_value >> 8) & 0xFF
+                frame[offset + 2] = speed_hw_value & 0xFF
+                frame[offset + 3] = (speed_hw_value >> 8) & 0xFF
+                offset += 4
+            
+            # Get effective gripper values (dual arm always includes grippers in 0x40 frame)
+            if gripper_value is None:
+                if current_state and isinstance(current_state, dict):
+                    left_js = current_state.get('left')
+                    right_js = current_state.get('right')
+                    left_gripper = left_js.gripper if left_js and hasattr(left_js, 'gripper') and left_js.gripper is not None else 1000.0
+                    right_gripper = right_js.gripper if right_js and hasattr(right_js, 'gripper') and right_js.gripper is not None else 1000.0
+                else:
+                    left_gripper = 1000.0
+                    right_gripper = 1000.0
+            else:
+                if isinstance(gripper_value, (list, tuple)) and len(gripper_value) == 2:
+                    left_gripper = float(gripper_value[0])
+                    right_gripper = float(gripper_value[1])
+                else:
+                    left_gripper = right_gripper = float(gripper_value)
+            
+            # Clamp gripper values to 0-1000
+            left_gripper = max(0, min(1000, int(left_gripper)))
+            right_gripper = max(0, min(1000, int(right_gripper)))
+            
+            # Write left gripper (4 bytes: 2 bytes value + 2 bytes speed)
+            frame[offset] = left_gripper & 0xFF
+            frame[offset + 1] = (left_gripper >> 8) & 0xFF
+            frame[offset + 2] = speed_hw_value & 0xFF
+            frame[offset + 3] = (speed_hw_value >> 8) & 0xFF
+            offset += 4
+            
+            # Write right gripper (4 bytes: 2 bytes value + 2 bytes speed)
+            frame[offset] = right_gripper & 0xFF
+            frame[offset + 1] = (right_gripper >> 8) & 0xFF
+            frame[offset + 2] = speed_hw_value & 0xFF
+            frame[offset + 3] = (speed_hw_value >> 8) & 0xFF
+            
+        elif arm in ("left", "right"):
+            # Single arm mode: 0x20 (32 bytes) = 7 joints * 4 + 1 gripper * 4
+            DATA_LENGTH = 0x20
+            FRAME_SIZE = 1 + 1 + 1 + 1 + DATA_LENGTH + 1 + 1
+            
+            frame = [0] * FRAME_SIZE
+            frame[0] = self.FRAME_HEADER  # 0xAA
+            frame[1] = self.CMD_DUAL_ARM  # 0x06
+            frame[2] = self.FUNC_JOINT_LEFT if arm == "left" else self.FUNC_JOINT_RIGHT  # 0x05 or 0x04
+            frame[3] = DATA_LENGTH
+            frame[-1] = self.FRAME_FOOTER  # 0xFF
+            
+            data_start = 4
+            
+            # Get effective joint angles
+            if joint_angles is None:
+                if current_state:
+                    if isinstance(current_state, dict):
+                        js = current_state.get(arm)
+                        effective_joints = js.angles if js and hasattr(js, 'angles') and js.angles else [0.0] * 7
+                    else:
+                        effective_joints = current_state.angles if hasattr(current_state, 'angles') and current_state.angles else [0.0] * 7
+                else:
+                    effective_joints = [0.0] * 7
+            else:
+                if not isinstance(joint_angles, list) or len(joint_angles) != 7:
+                    logger.error(f"Single arm mode requires joint_angles as List[float] with 7 angles")
+                    return None
+                effective_joints = joint_angles
+            
+            # Apply direction mapping
+            mapped_angles = [effective_joints[i] * self.direction_map[arm][i] for i in range(7)]
+            
+            # Write joints (7 joints * 4 bytes = 28 bytes)
+            offset = data_start
+            for joint_idx in range(7):
+                angle_rad = mapped_angles[joint_idx]
+                hw_value = self._rad_to_hardware_value(angle_rad)
+                frame[offset] = hw_value & 0xFF
+                frame[offset + 1] = (hw_value >> 8) & 0xFF
+                frame[offset + 2] = speed_hw_value & 0xFF
+                frame[offset + 3] = (speed_hw_value >> 8) & 0xFF
+                offset += 4
+            
+            # Get effective gripper value
+            if gripper_value is None:
+                if current_state:
+                    if isinstance(current_state, dict):
+                        js = current_state.get(arm)
+                        effective_gripper = js.gripper if js and hasattr(js, 'gripper') and js.gripper is not None else 1000.0
+                    else:
+                        effective_gripper = current_state.gripper if hasattr(current_state, 'gripper') and current_state.gripper is not None else 1000.0
+                else:
+                    effective_gripper = 1000.0
+            else:
+                if isinstance(gripper_value, (list, tuple)):
+                    logger.warning(f"单臂模式但提供了列表形式的gripper_value，使用第一个值")
+                    effective_gripper = float(gripper_value[0])
+                else:
+                    effective_gripper = float(gripper_value)
+            
+            # Clamp gripper value to 0-1000
+            effective_gripper = max(0, min(1000, int(effective_gripper)))
+            
+            # Write gripper (4 bytes: 2 bytes value + 2 bytes speed)
+            frame[offset] = effective_gripper & 0xFF
+            frame[offset + 1] = (effective_gripper >> 8) & 0xFF
+            frame[offset + 2] = speed_hw_value & 0xFF
+            frame[offset + 3] = (speed_hw_value >> 8) & 0xFF
+            # Total: 7 joints * 4 + 1 gripper * 4 = 28 + 4 = 32 bytes (0x20)
         else:
-            if arm not in ['left', 'right']:
-                logger.error(f"单臂模式需指定arm(left/right)，当前: {arm}")
-                return []
-            if len(joint_angles) != 7:
-                logger.error(f"关节角数量应为7，当前: {len(joint_angles)}")
-                return []
-            func_code = self.FUNC_JOINT_RIGHT if arm == 'right' else self.FUNC_JOINT_LEFT
-            mapped = [joint_angles[i] * self.direction_map[arm][i] for i in range(7)]
-            data_bytes = self._angles_to_bytes(mapped)
+            logger.error(f"Invalid arm parameter: {arm}")
+            return None
         
-        # 构建帧: AA 06 FUNC_CODE LEN DATA CHECK FF
-        length = len(data_bytes)
-        frame = [0] * (length + 6)  # 头 + 指令 + 功能码 + 长度 + 数据 + 校验 + 尾
-        frame[0] = self.FRAME_HEADER
-        frame[1] = self.CMD_DUAL_ARM
-        frame[2] = func_code
-        frame[3] = length
-        for i, b in enumerate(data_bytes):
-            frame[4 + i] = b
-        frame[-1] = self.FRAME_FOOTER
-        # 校验: 使用CRC-32计算 Cmd + Func + Len + Data (frame[1:-2])
+        # Calculate checksum
         frame[-2] = self.serial_comm.calculate_checksum(frame[1:-2])
         
         if self.debug_mode:
-            if is_dual:
-                logger.debug(f"构建双臂关节帧 angles(deg)={[[round(a * self.RAD_TO_DEG, 1) for a in angles] for angles in joint_angles]}")
+            if arm == "both":
+                logger.debug(f"Built combined frame (both arms) - joints: {joint_angles}, grippers: {gripper_value}, speed: {speed_deg_s} deg/s")
             else:
-                logger.debug(f"构建关节帧 {arm} angles(deg)={[round(a * self.RAD_TO_DEG, 1) for a in joint_angles]}")
+                logger.debug(f"Built combined frame ({arm} arm) - joints: {joint_angles}, speed: {speed_deg_s} deg/s")
+        
         return frame
-    
+
+    def _deg_s_to_hardware_speed(self, speed_deg_s: float) -> int:
+        """
+        Convert speed from degrees per second to hardware value (50-5000, step 50).
+        
+        Uses the same conversion formula as Alicia for consistency:
+        - Mapping: 360 deg/s = 4096 ticks/s
+        - Formula: speed_deg_s / (360.0 / 4096.0) = speed_deg_s * 4096.0 / 360.0
+        - Range: 50-5000, rounded to nearest multiple of 50
+        
+        :param speed_deg_s: Speed in degrees per second (4.39-439.45, required range)
+        :return: Hardware speed value (50-5000, multiple of 50)
+        """
+        # Hardware speed range: 50-5000 ticks/s (step 50)
+        MIN_HARDWARE_VALUE = 50
+        MAX_HARDWARE_VALUE = 5000
+        STEP_SIZE = 50
+        
+        # Known mapping: 360 deg/s = 4096 ticks/s
+        # Calculate speed range based on hardware range
+        # Ratio: 360 / 4096 = 0.087890625 deg/(tick/s)
+        DEG_PER_TICK_PER_SEC = 360.0 / 4096.0
+        MIN_SPEED_DEG_S = MIN_HARDWARE_VALUE * DEG_PER_TICK_PER_SEC  # ≈ 4.39 deg/s
+        MAX_SPEED_DEG_S = MAX_HARDWARE_VALUE * DEG_PER_TICK_PER_SEC  # ≈ 439.45 deg/s
+        
+        # Validate and clip speed to required range
+        if speed_deg_s < MIN_SPEED_DEG_S:
+            logger.warning(f"Speed below range: {speed_deg_s} deg/s (min {MIN_SPEED_DEG_S:.2f}), will be clipped to {MIN_SPEED_DEG_S:.2f}")
+            speed_deg_s = MIN_SPEED_DEG_S
+        elif speed_deg_s > MAX_SPEED_DEG_S:
+            logger.warning(f"Speed above range: {speed_deg_s} deg/s (max {MAX_SPEED_DEG_S:.2f}), will be clipped to {MAX_SPEED_DEG_S:.2f}")
+            speed_deg_s = MAX_SPEED_DEG_S
+        
+        # Convert deg/s to ticks/s using the known ratio (same as Alicia)
+        hardware_value = speed_deg_s / DEG_PER_TICK_PER_SEC
+        
+        # Round to nearest multiple of 50
+        hardware_value = round(hardware_value / STEP_SIZE) * STEP_SIZE
+        
+        if self.debug_mode:
+            logger.debug(f"Speed: {speed_deg_s} deg/s, Hardware value: {hardware_value}")
+        
+        return max(MIN_HARDWARE_VALUE, min(MAX_HARDWARE_VALUE, int(hardware_value)))
+
     def _angles_to_bytes(self, angles: List[float]) -> List[int]:
         """将角度列表转换为字节数组 (每角度2字节 little-endian)"""
         data_bytes = []
@@ -706,53 +862,6 @@ class ServoDriver:
         return frame
 
 
-    
-    def _build_gripper_frame(self, 
-                         angle_rad: Union[float, Tuple[float, float]],
-                         arm: str = None) -> List[int]:
-        """
-        构建夹爪控制帧（通过 joint_frame 中的夹爪位直接写入）
-
-        Args:
-            angle_rad: 
-                - float: 单臂夹爪角度（弧度）
-                - tuple: 双臂夹爪角度 (left_rad, right_rad)
-            arm: 
-                - None: 双臂控制
-                - "left" 或 "right"
-
-        Returns:
-            List[int]: 控制帧字节列表
-        """
-        # 创建夹爪控制帧 (固定长度)
-        frame = [0] * self.GRIPPER_FRAME_SIZE
-        frame[0] = self.FRAME_HEADER
-        frame[1] = self.CMD_GRIPPER
-        frame[2] = self.GRIPPER_FRAME_SIZE - 5  # 数据长度
-        frame[-1] = self.FRAME_FOOTER
-
-        if arm == 'left':
-            frame[3] = self.left
-    
-        elif arm == 'right':
-            frame[3] = self.right
-        
-        # 转换为硬件值
-        gripper_value = self._rad_to_hardware_value_grip(angle_rad)
-        
-        # 写入夹爪角度
-        offset = 4
-        frame[offset] = gripper_value & 0xFF  # 低字节
-        frame[offset+1] = (gripper_value >> 8) & 0xFF  # 高字节
-        
-        # 计算并设置校验和 (使用CRC-32)
-        frame[-2] = self.serial_comm.calculate_checksum(frame[1:-2])
-        
-        
-        if self.debug_mode:
-            angle_deg = round(angle_rad * self.RAD_TO_DEG, 2)
-            logger.debug(f"发送夹爪角度: {angle_deg}度 ({angle_rad:.4f}弧度)")
-        return frame
 
     
     def _build_command_frame(self, cmd_id: int, arm: str, data: List[int]) -> List[int]:
@@ -916,67 +1025,27 @@ class ServoDriver:
         frame[-2] = self.serial_comm.calculate_checksum(frame[1:-2])
         return frame
 
-    def set_speed_raw(self, speed_value: int) -> bool:
-        """设置速度原始值(0~3400)。"""
-        frame = self._build_speed_frame(speed_value)
-        return self.serial_comm.send_data(frame)
-
-    def set_speed_deg_s(self, speed_deg_s: float) -> bool:
-        """按度/秒设置速度：先转 rad/s，再按 (rad_s / 2π) * 3400 映射为原始值。"""
-        try:
-            deg_s = float(speed_deg_s)
-        except Exception:
-            return False
-        rad_s = deg_s * self.DEG_TO_RAD
-        max_angle_rad_per_sec = math.pi * 2.0
-        raw = int(max(1, min(3400, (rad_s / max_angle_rad_per_sec) * 3400.0)))
-        return self.set_speed_raw(raw)
 
 
 
 
     def set_gripper_deg(self, arm: str, angle_deg: float, wait: bool = False) -> bool:
-        """设置夹爪角度（度制）。"""
-        if arm not in ["left", "right" , "both"]:
+        """设置夹爪角度（度制）。使用统一的 set_joint_and_gripper 方法。"""
+        if arm not in ["left", "right", "both"]:
             logger.error(f"set_gripper_deg: arm 参数无效: {arm}")
             return False
-        angle_rad = angle_deg * self.DEG_TO_RAD
-        if arm in ["left", "right"]:
-            return self.set_gripper(angle_rad, arm=arm, wait_for_completion=wait)
-        elif arm == "both":
-            return self.set_gripper(angle_rad, arm="left", wait_for_completion=wait) and self.set_gripper(angle_rad, arm="right", wait_for_completion=wait)
-        else:
-            logger.error(f"set_gripper_deg: arm 参数无效: {arm}")
-            return False
-
-
-    def print_joint_angles_deg(self, arm: str = "both", read_gripper: bool = True):
-        """打印当前关节角度（度）。"""
-        joint_angles = self.read_joint_state(arm)
+        
+        # Convert degrees to gripper value (0-1000)
+        # Assuming angle_deg is 0-100 where 0 is closed and 100 is open
+        gripper_value = max(0, min(1000, int(angle_deg * 10)))
+        
         if arm == "both":
-            left_deg = [round(a * self.RAD_TO_DEG, 2) for a in joint_angles[0]]
-            right_deg = [round(a * self.RAD_TO_DEG, 2) for a in joint_angles[1]]
-            print(f"左臂关节角度: {left_deg}")
-            print(f"右臂关节角度: {right_deg}")
-            if read_gripper:
-                self.print_gripper_angles_deg(arm)
-        else:
-            angles_deg = [round(a * self.RAD_TO_DEG, 2) for a in joint_angles]
-            print(f"{arm} 关节角度: {angles_deg}")
-            if read_gripper:
-                self.print_gripper_angles_deg(arm)
+            gripper_value = [gripper_value, gripper_value]
+        
+        return self.set_joint_and_gripper(
+            joint_angles=None,
+            gripper_value=gripper_value,
+            arm=arm,
+            speed_deg_s=20.0
+        )
 
-    def print_gripper_angles_deg(self, arm: str = "both"):
-        """打印当前夹爪角度（度, 0~100）。"""
-        gripper_angles = self.read_gripper_data(arm)
-        if arm == "both":
-            left_deg = round(gripper_angles[0] * self.RAD_TO_DEG, 2)
-            right_deg = round(gripper_angles[1] * self.RAD_TO_DEG, 2)
-            print(f"左夹爪角度: {left_deg}")
-            print(f"右夹爪角度: {right_deg}")
-        else:
-            angle_deg = round(gripper_angles * self.RAD_TO_DEG, 2)
-            if arm == 'left':
-                print(f"左夹爪角度: {angle_deg}")
-            else:
-                print(f"右夹爪角度: {angle_deg}")

@@ -20,17 +20,13 @@ def main(args):
     
     :param args: Command line arguments containing port, baudrate, version
     """
-    # Initialize robot instance
     robot = bessica_d_sdk.create_robot(
         port=args.port,
         robot_version=args.robot_version
     )
-
     try:
         
         robot.print_state(continuous=True, output_format='deg')
-        # robot.print_state(continuous=False, output_format='deg')
-
     except Exception as e:
         print(f"✗ Error: {e}")
         import traceback

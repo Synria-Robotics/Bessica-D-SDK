@@ -32,7 +32,6 @@ def main(args):
         if not robot.connect():
             print("✗ Connection failed, please check serial port settings")
             return
-        robot.set_speed(speed_deg_s=args.speed_deg_s)
 
         # Example joint targets in degrees (7 DOF per arm)
         left_angles_deg = [20, 20, 20, 20, 20, 20, 20]
