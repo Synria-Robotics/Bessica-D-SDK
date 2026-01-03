@@ -542,11 +542,13 @@ class ServoDriver:
         :return: Frame byte list or None if error
         """
         # Convert speed to hardware value (0-5000, where 5000 is max speed)
-        speed_hw_value = self._deg_s_to_hardware_speed(speed_deg_s)
+        # speed_hw_value = self._deg_s_to_hardware_speed(speed_deg_s)
+        speed_hw_value = 1000
         logger.info(f"speed_hw_value: {speed_hw_value}")
         # Get current state for optional values
         current_state = self.data_parser.get_joint_state(arm)
-        
+        gripper_speed_hw_value = 1000
+        # gripper_speed_hw_value = 5500
         # Handle gripper-only case (both arms, no joints)
         if arm == "both" and joint_angles is None and gripper_value is not None:
             # Gripper-only control: FUNC=0x06, LEN=0x08
@@ -572,7 +574,7 @@ class ServoDriver:
             right_gripper = max(0, min(1000, int(right_gripper)))
             
             # Write left gripper (4 bytes: 2 bytes value + 2 bytes speed)
-            gripper_speed_hw_value = 5500
+            
 
             frame[4] = left_gripper & 0xFF
             frame[5] = (left_gripper >> 8) & 0xFF
@@ -595,9 +597,7 @@ class ServoDriver:
         
         if arm == "both":
             # Dual arm mode: 
-            # Protocol supports 0x1C (28 bytes, joints only) or 0x40 (64 bytes, joints + grippers)
             # For 灵越系列, always use 0x40 as it includes: 右臂7关节 + 左臂7关节 + 左右夹爪
-            # 0x1C = 28 bytes = 右臂7关节*4 + 左臂7关节*4 (no grippers)
             # 0x40 = 64 bytes = 右臂7关节*4 + 左臂7关节*4 + 左夹爪*4 + 右夹爪*4
             DATA_LENGTH = 0x40
             FRAME_SIZE = 1 + 1 + 1 + 1 + DATA_LENGTH + 1 + 1  # header + cmd + func + len + data + checksum + footer
@@ -677,15 +677,15 @@ class ServoDriver:
             # Write left gripper (4 bytes: 2 bytes value + 2 bytes speed)
             frame[offset] = left_gripper & 0xFF
             frame[offset + 1] = (left_gripper >> 8) & 0xFF
-            frame[offset + 2] = speed_hw_value & 0xFF
-            frame[offset + 3] = (speed_hw_value >> 8) & 0xFF
+            frame[offset + 2] = gripper_speed_hw_value & 0xFF
+            frame[offset + 3] = (gripper_speed_hw_value >> 8) & 0xFF
             offset += 4
             
             # Write right gripper (4 bytes: 2 bytes value + 2 bytes speed)
             frame[offset] = right_gripper & 0xFF
             frame[offset + 1] = (right_gripper >> 8) & 0xFF
-            frame[offset + 2] = speed_hw_value & 0xFF
-            frame[offset + 3] = (speed_hw_value >> 8) & 0xFF
+            frame[offset + 2] = gripper_speed_hw_value & 0xFF
+            frame[offset + 3] = (gripper_speed_hw_value >> 8) & 0xFF
             
         elif arm in ("left", "right"):
             # Single arm mode: 0x20 (32 bytes) = 7 joints * 4 + 1 gripper * 4
@@ -772,30 +772,27 @@ class ServoDriver:
         
         return frame
 
-    def _deg_s_to_hardware_speed(self, speed_deg_s: float) -> int:
+
+    def _deg_s_to_hardware_speed(self, speed_deg_s: int) -> int:
         """
-        Convert speed from degrees per second to hardware value (50-5000, step 50).
-        
-        Uses the same conversion formula as Alicia for consistency:
-        - Mapping: 360 deg/s = 4096 ticks/s
-        - Formula: speed_deg_s / (360.0 / 4096.0) = speed_deg_s * 4096.0 / 360.0
-        - Range: 50-5000, rounded to nearest multiple of 50
-        
-        :param speed_deg_s: Speed in degrees per second (4.39-439.45, required range)
-        :return: Hardware speed value (50-5000, multiple of 50)
+        Converts speed from degrees per second to hardware value (50-5000, step 50).
+        Mapping: 360 deg/s = 4096 ticks/s, so 50 ticks/s ≈ 4.39 deg/s, 5000 ticks/s ≈ 439.45 deg/s.
+
+        :param speed_deg_s: The desired speed in degrees per second (4.39-439.45, required range)
+        :return: A corresponding raw integer speed value (50-5000, multiple of 50)
         """
         # Hardware speed range: 50-5000 ticks/s (step 50)
         MIN_HARDWARE_VALUE = 50
         MAX_HARDWARE_VALUE = 5000
         STEP_SIZE = 50
-        
+
         # Known mapping: 360 deg/s = 4096 ticks/s
         # Calculate speed range based on hardware range
         # Ratio: 360 / 4096 = 0.087890625 deg/(tick/s)
         DEG_PER_TICK_PER_SEC = 360.0 / 4096.0
         MIN_SPEED_DEG_S = MIN_HARDWARE_VALUE * DEG_PER_TICK_PER_SEC  # ≈ 4.39 deg/s
         MAX_SPEED_DEG_S = MAX_HARDWARE_VALUE * DEG_PER_TICK_PER_SEC  # ≈ 439.45 deg/s
-        
+
         # Validate and clip speed to required range
         if speed_deg_s < MIN_SPEED_DEG_S:
             logger.warning(f"Speed below range: {speed_deg_s} deg/s (min {MIN_SPEED_DEG_S:.2f}), will be clipped to {MIN_SPEED_DEG_S:.2f}")
@@ -803,16 +800,14 @@ class ServoDriver:
         elif speed_deg_s > MAX_SPEED_DEG_S:
             logger.warning(f"Speed above range: {speed_deg_s} deg/s (max {MAX_SPEED_DEG_S:.2f}), will be clipped to {MAX_SPEED_DEG_S:.2f}")
             speed_deg_s = MAX_SPEED_DEG_S
-        
-        # Convert deg/s to ticks/s using the known ratio (same as Alicia)
+
+        # Convert deg/s to ticks/s using the known ratio
         hardware_value = speed_deg_s / DEG_PER_TICK_PER_SEC
-        
+
         # Round to nearest multiple of 50
         hardware_value = round(hardware_value / STEP_SIZE) * STEP_SIZE
-        
-        if self.debug_mode:
-            logger.debug(f"Speed: {speed_deg_s} deg/s, Hardware value: {hardware_value}")
-        
+        logger.debug(f"Speed: {speed_deg_s} deg/s, Hardware value: {hardware_value}")
+
         return max(MIN_HARDWARE_VALUE, min(MAX_HARDWARE_VALUE, int(hardware_value)))
 
     def _angles_to_bytes(self, angles: List[float]) -> List[int]:

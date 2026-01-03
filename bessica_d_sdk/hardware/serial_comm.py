@@ -163,7 +163,7 @@ class SerialComm:
                 hex_print(logger, "data_bytes", data_bytes)
                 # Write data
                 bytes_written = self.serial_port.write(data_bytes)
-                time.sleep(0.001)  # 必须 0.001， Mac上158hz
+                time.sleep(1)  # 必须 0.001， Mac上158hz
                 try:
                     self.serial_port.flush()
                 except Exception:

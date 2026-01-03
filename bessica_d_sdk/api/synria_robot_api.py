@@ -151,11 +151,11 @@ class SynriaBessicaRobotAPI:
             # Dual-arm: use unified set_robot_state
             return self.set_robot_state(
                 target_joints=[home_angles, home_angles],
-                gripper_value=[1000, 1000],  # Open both grippers
+                gripper_value=[0, 0],  # Open both grippers
                 arm="both",
                 joint_format="rad",
                 speed_deg_s=speed_deg_s,
-                wait_for_completion=True,
+                wait_for_completion=False,
             )
 
         elif arm in ("left", "right"):
@@ -166,7 +166,7 @@ class SynriaBessicaRobotAPI:
                 arm=arm,
                 joint_format="rad",
                 speed_deg_s=speed_deg_s,
-                wait_for_completion=True,
+                wait_for_completion=False,
             )
 
         else:
@@ -235,14 +235,12 @@ class SynriaBessicaRobotAPI:
                     gripper_value = list(gripper_value)
                 else:
                     # If single value provided for both arms, use it for both
-                    gripper_value = [float(gripper_value), float(gripper_value)]
+                    gripper_value = [gripper_value, gripper_value]
             else:
-                # Single arm: ensure it's a float
+                # Single arm: take first value if list/tuple provided
                 if isinstance(gripper_value, (list, tuple)):
                     logger.warning(f"单臂模式但提供了列表形式的gripper_value，使用第一个值")
-                    gripper_value = float(gripper_value[0])
-                else:
-                    gripper_value = float(gripper_value)
+                    gripper_value = gripper_value[0]
         
         # Use unified method in servo_driver
         success = self.servo_driver.set_joint_and_gripper(
@@ -376,38 +374,6 @@ class SynriaBessicaRobotAPI:
 
 
     # ==================== 夹爪控制 ====================
-
-    # ==================== 位姿与状态 ====================
-    def get_joints(self, arm: Optional[str] = None) -> Optional[Union[List[float], List[List[float]]]]:
-        """Get current joint angles.
-
-        :param arm: Arm to query, "left", "right", or "both" (default: "both")
-        :return: Joint angles in radians. For single arm: List[float] (7 angles). For dual arm: List[List[float]] (2x7 angles). None if unavailable
-        """
-        arm = arm or "both"
-        # Request joint data from hardware first
-        if not self.servo_driver.acquire_info("joint_gripper", wait=True, timeout=1.0):
-            logger.warning("Failed to acquire joint data from hardware")
-            return None
-        joint_angles = self.servo_driver.read_joint_angles(arm)
-        # logger.info(f"{arm}'s joint_angles: {joint_angles}")
-        return joint_angles
-
-    def get_gripper(self, arm: Optional[str] = None) -> Optional[Union[float, Tuple[float, float]]]:
-        """Get current gripper position.
-
-        :param arm: Arm to query, "left", "right", or "both" (default: "both")
-        :return: Gripper position in degrees. For single arm: float. For dual arm: Tuple[float, float]. None if unavailable
-        """
-        arm = arm or "both"
-        # Request joint/gripper data from hardware first (gripper data comes with joint data)
-        if not self.servo_driver.acquire_info("joint_gripper", wait=True, timeout=1.0):
-            logger.warning("Failed to acquire gripper data from hardware")
-            return None
-        try:
-            return self.servo_driver.read_gripper_data(arm if arm in ['left', 'right'] else 'both')
-        except Exception:
-            return None
 
     def get_pose(self, arm: Optional[str] = None) -> Optional[Dict]:
         """Get current end-effector pose.
