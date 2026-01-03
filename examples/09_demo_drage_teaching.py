@@ -54,9 +54,9 @@ def main(args):
     # 执行轨迹
     input("按 Enter 执行轨迹...")
     
-    robot.set_joint_target(target_joints=start_deg, arm="right", joint_format="deg")
+    robot.set_robot_state(target_joints=start_deg, arm="right", joint_format="deg", wait_for_completion=False)
     time.sleep(2)
-    robot.set_joint_target(target_joints=goal_deg, arm="right", joint_format="deg")
+    robot.set_robot_state(target_joints=goal_deg, arm="right", joint_format="deg", wait_for_completion=False)
     time.sleep(2)
     
     print("完成")

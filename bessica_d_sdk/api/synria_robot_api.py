@@ -764,7 +764,7 @@ class SynriaBessicaRobotAPI:
                     return False
                 delay = duration / num_points
                 for q in q_traj.tolist():
-                    if not self.servo_driver.set_joint_angles(q, arm=arm, wait_for_completion=False):
+                    if not self.set_robot_state(target_joints=q, arm=arm, joint_format="rad", wait_for_completion=False):
                         return False
                     time.sleep(delay)
                 return True
@@ -776,7 +776,7 @@ class SynriaBessicaRobotAPI:
                 for s in range(1, steps + 1):
                     r = s / steps
                     q = [a + (b - a) * r for a, b in zip(q_start, q_end)]
-                    if not self.servo_driver.set_joint_angles(q, arm=arm, wait_for_completion=False):
+                    if not self.set_robot_state(target_joints=q, arm=arm, joint_format="rad", wait_for_completion=False):
                         return False
                     time.sleep(delay)
                 return True
@@ -837,9 +837,8 @@ class SynriaBessicaRobotAPI:
                 delay = duration / num_points
                 for q_left, q_right in zip(q_traj_left.tolist(), q_traj_right.tolist()):
                     # 同时发送左右臂指令
-                    success_left = self.servo_driver.set_joint_angles(q_left, arm="left", wait_for_completion=False)
-                    success_right = self.servo_driver.set_joint_angles(q_right, arm="right", wait_for_completion=False)
-                    if not (success_left and success_right):
+                    success = self.set_robot_state(target_joints=[q_left, q_right], arm="both", joint_format="rad", wait_for_completion=False)
+                    if not success:
                         return False
                     time.sleep(delay)
                 return True
@@ -852,9 +851,8 @@ class SynriaBessicaRobotAPI:
                     r = s / steps
                     q_left = [a + (b - a) * r for a, b in zip(q_start_left, q_end_left)]
                     q_right = [a + (b - a) * r for a, b in zip(q_start_right, q_end_right)]
-                    success_left = self.servo_driver.set_joint_angles(q_left, arm="left", wait_for_completion=False)
-                    success_right = self.servo_driver.set_joint_angles(q_right, arm="right", wait_for_completion=False)
-                    if not (success_left and success_right):
+                    success = self.set_robot_state(target_joints=[q_left, q_right], arm="both", joint_format="rad", wait_for_completion=False)
+                    if not success:
                         return False
                     time.sleep(delay)
                 return True
@@ -951,7 +949,7 @@ class SynriaBessicaRobotAPI:
             
             delay = duration / num_points
             for q in q_traj.tolist():
-                if not self.servo_driver.set_joint_angles(q, arm=arm, wait_for_completion=False):
+                if not self.set_robot_state(target_joints=q, arm=arm, joint_format="rad", wait_for_completion=False):
                     return False
                 time.sleep(delay)
             return True
@@ -1039,9 +1037,8 @@ class SynriaBessicaRobotAPI:
             delay = duration / num_points
             for q_left, q_right in zip(q_traj_left.tolist(), q_traj_right.tolist()):
                 # 同时发送左右臂指令
-                success_left = self.servo_driver.set_joint_angles(q_left, arm="left", wait_for_completion=False)
-                success_right = self.servo_driver.set_joint_angles(q_right, arm="right", wait_for_completion=False)
-                if not (success_left and success_right):
+                success = self.set_robot_state(target_joints=[q_left, q_right], arm="both", joint_format="rad", wait_for_completion=False)
+                if not success:
                     return False
                 time.sleep(delay)
             return True
