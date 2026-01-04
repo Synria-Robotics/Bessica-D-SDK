@@ -540,7 +540,6 @@ class ServoDriver:
         """
         # Convert speed to hardware value (0-5000, where 5000 is max speed)
         speed_hw_value = self._deg_s_to_hardware_speed(speed_deg_s)
-        logger.info(f"speed_hw_value: {speed_hw_value}")
         # Get current state for optional values
         current_state = self.data_parser.get_joint_state(arm)
         gripper_speed_hw_value = 1000

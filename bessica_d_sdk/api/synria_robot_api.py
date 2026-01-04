@@ -293,9 +293,13 @@ class SynriaBessicaRobotAPI:
         arm = arm or "both"
         
         # Get current joint positions as initial guess
-        current_joints = self.get_joints(arm=arm)
-        if current_joints is None:
+        joints_dict = self.get_robot_state("joint")
+        if joints_dict is None:
             current_joints = [0.0] * 7 if arm != "both" else [[0.0] * 7, [0.0] * 7]
+        elif arm == "both":
+            current_joints = [joints_dict.get('left', [0.0] * 7), joints_dict.get('right', [0.0] * 7)]
+        else:
+            current_joints = joints_dict.get(arm, [0.0] * 7)
         
         # Convert pose to transformation matrix
         def pose_to_matrix(pose: List[float]) -> np.ndarray:
@@ -753,7 +757,11 @@ class SynriaBessicaRobotAPI:
                 logger.error(f"单臂模式需要7个关节角度，但得到 {len(q_end)} 个")
                 return False
             
-            q_start = self.get_joints(arm=arm)
+            joints_dict = self.get_robot_state("joint")
+            if not joints_dict or not isinstance(joints_dict, dict):
+                logger.error("无法获取当前关节角度")
+                return False
+            q_start = joints_dict.get(arm)
             if not q_start or not isinstance(q_start, list) or len(q_start) != 7:
                 logger.error("无法获取当前关节角度")
                 return False
@@ -813,13 +821,15 @@ class SynriaBessicaRobotAPI:
                 q_end_left = [a * np.pi / 180.0 for a in q_end_left]
                 q_end_right = [a * np.pi / 180.0 for a in q_end_right]
             
-            q_start = self.get_joints(arm="both")
-            if not q_start or not isinstance(q_start, list) or len(q_start) != 2:
+            joints_dict = self.get_robot_state("joint")
+            if not joints_dict or not isinstance(joints_dict, dict):
                 logger.error("无法获取当前关节角度（双臂）")
                 return False
-            
-            q_start_left = q_start[0]
-            q_start_right = q_start[1]
+            q_start_left = joints_dict.get('left')
+            q_start_right = joints_dict.get('right')
+            if not q_start_left or not q_start_right or not isinstance(q_start_left, list) or not isinstance(q_start_right, list) or len(q_start_left) != 7 or len(q_start_right) != 7:
+                logger.error("无法获取当前关节角度（双臂）")
+                return False
             
             try:
                 import numpy as _np
@@ -938,7 +948,11 @@ class SynriaBessicaRobotAPI:
             rotation = _quat_to_mat(quaternion)
             pose_end = _make_tf(rotation, position)
             
-            q_init = self.get_joints(arm=arm)
+            joints_dict = self.get_robot_state("joint")
+            if not joints_dict or not isinstance(joints_dict, dict):
+                logger.error("无法获取当前关节角度作为IK初值")
+                return False
+            q_init = joints_dict.get(arm)
             if not q_init or not isinstance(q_init, list) or len(q_init) != 7:
                 logger.error("无法获取当前关节角度作为IK初值")
                 return False
@@ -1008,13 +1022,17 @@ class SynriaBessicaRobotAPI:
             pose_end_right = _make_tf(rotation_right, position_right)
             
             # 获取当前关节角度作为IK初值
-            q_init = self.get_joints(arm="both")
-            if not q_init or not isinstance(q_init, list) or len(q_init) != 2:
+            joints_dict = self.get_robot_state("joint")
+            if not joints_dict or not isinstance(joints_dict, dict):
                 logger.error("无法获取当前关节角度作为IK初值（双臂）")
                 return False
-            
-            q_init_left = _np.array(q_init[0])
-            q_init_right = _np.array(q_init[1])
+            q_init_left_raw = joints_dict.get('left')
+            q_init_right_raw = joints_dict.get('right')
+            if not q_init_left_raw or not q_init_right_raw or not isinstance(q_init_left_raw, list) or not isinstance(q_init_right_raw, list) or len(q_init_left_raw) != 7 or len(q_init_right_raw) != 7:
+                logger.error("无法获取当前关节角度作为IK初值（双臂）")
+                return False
+            q_init_left = _np.array(q_init_left_raw)
+            q_init_right = _np.array(q_init_right_raw)
             
             try:
                 # 为左右臂分别生成轨迹
@@ -1089,8 +1107,8 @@ class SynriaBessicaRobotAPI:
         start_time = time.time()
 
         while time.time() - start_time < timeout:
-            current_joints = self.get_joints(arm=arm)
-            if current_joints is None:
+            joints_dict = self.get_robot_state("joint")
+            if joints_dict is None:
                 time.sleep(0.01)
                 continue
 
@@ -1098,20 +1116,29 @@ class SynriaBessicaRobotAPI:
                 if not isinstance(target_joints, list) or len(target_joints) != 2:
                     logger.error("Invalid target_joints format for both arms")
                     return False
-                if not isinstance(current_joints, list) or len(current_joints) != 2:
+                if not isinstance(joints_dict, dict):
+                    time.sleep(0.01)
+                    continue
+                current_joints_left = joints_dict.get('left')
+                current_joints_right = joints_dict.get('right')
+                if not current_joints_left or not current_joints_right or not isinstance(current_joints_left, list) or not isinstance(current_joints_right, list) or len(current_joints_left) != 7 or len(current_joints_right) != 7:
                     time.sleep(0.01)
                     continue
                 
                 # Check both arms
-                left_reached = all(abs(a - b) <= tolerance for a, b in zip(current_joints[0], target_joints[0]))
-                right_reached = all(abs(a - b) <= tolerance for a, b in zip(current_joints[1], target_joints[1]))
+                left_reached = all(abs(a - b) <= tolerance for a, b in zip(current_joints_left, target_joints[0]))
+                right_reached = all(abs(a - b) <= tolerance for a, b in zip(current_joints_right, target_joints[1]))
                 if left_reached and right_reached:
                     return True
             else:
                 if not isinstance(target_joints, list) or len(target_joints) != 7:
                     logger.error(f"Invalid target_joints format for {arm} arm")
                     return False
-                if not isinstance(current_joints, list) or len(current_joints) != 7:
+                if not isinstance(joints_dict, dict):
+                    time.sleep(0.01)
+                    continue
+                current_joints = joints_dict.get(arm)
+                if not current_joints or not isinstance(current_joints, list) or len(current_joints) != 7:
                     time.sleep(0.01)
                     continue
                 
@@ -1121,7 +1148,11 @@ class SynriaBessicaRobotAPI:
             time.sleep(0.01)
 
         logger.warning(f"{log_prefix}超时")
-        current_joints = self.get_joints(arm=arm)
+        joints_dict = self.get_robot_state("joint")
+        if arm == "both":
+            current_joints = [joints_dict.get('left', []) if joints_dict else [], joints_dict.get('right', []) if joints_dict else []]
+        else:
+            current_joints = joints_dict.get(arm, []) if joints_dict else []
         logger.warning(f"目标关节角度: {target_joints}")
         logger.warning(f"当前关节角度: {current_joints}")
         return False

@@ -35,7 +35,6 @@ def main(args):
     """
     robot = bessica_d_sdk.create_robot(
         port=args.port,
-        baudrate=args.baudrate,
         robot_version=args.robot_version,
         debug_mode=False,
         variant=args.variant,
@@ -45,9 +44,7 @@ def main(args):
         right_end_link=args.right_end_link,
     )
     rc.set_backend(args.backend)
-    if not robot.connect():
-        return
-    
+
     # Solve IK based on arm selection
     if args.arm == "both":
         ik_result = robot.set_pose_target(
@@ -120,10 +117,9 @@ if __name__ == "__main__":
     
     # Robot configuration
     parser.add_argument('--port', type=str, default="", help="串口端口 (例如: /dev/ttyUSB0 或 COM3)")
-    parser.add_argument('--baudrate', type=int, default=1000000,  help="波特率 (默认: 1000000)")
     parser.add_argument('--robot_version', type=str, default="v1_1",  help="机械臂版本 (默认: v1_1)")
 
-    parser.add_argument('--arm', type=str, default='left',
+    parser.add_argument('--arm', type=str, default='both',
                         choices=['left', 'right', 'both'],
                         help='要查询的机械臂 (默认: both)')
     parser.add_argument('--variant', type=str, default='skeleton',
@@ -131,19 +127,17 @@ if __name__ == "__main__":
     parser.add_argument('--left-base-link', type=str, default='base_link',
                         help='左臂基座链接名称 (默认: base_link)')
     parser.add_argument('--left-end-link', type=str, default='left_arm_link7',
-    # parser.add_argument('--left-end-link', type=str, default='left_tool0',
                         help='左臂末端执行器链接名称 (默认: left_tool0)')
     parser.add_argument('--right-base-link', type=str, default='base_link',
                         help='右臂基座链接名称 (默认: base_link)')
     parser.add_argument('--right-end-link', type=str, default='right_arm_link7',
-    # parser.add_argument('--right-end-link', type=str, default='right_tool0',
                         help='右臂末端执行器链接名称 (默认: right_tool0)')
 
     parser.add_argument('--target-left', type=float, nargs='+',
-                        default=[0.22016, +0.38612, +0.43572, -0.586009, -0.550986, -0.173321, +0.56830],
+                        default=[0.21704, +0.38451, +0.43961, -0.581520, -0.557668, -0.181004, +0.563984],
                         help='Target left end-effector pose as 7 floats (px, py, pz, qx, qy, qz, qw)')
     parser.add_argument('--target-right', type=float, nargs='+',
-                        default=[0.22049, -0.38466, +0.43536, 0.582590, -0.551678, +0.173164, +0.571188],
+                        default=[0.21707, -0.38424, +0.43838, 0.576014, -0.559190, +0.180929, +0.568136],
                         help='Target right end-effector pose as 7 floats (px, py, pz, qx, qy, qz, qw)')
     parser.add_argument('--coordination', type=str, default='indep',
                         choices=['indep', 'relative_pose', 'relative_pos', 'relative_ori', 'mirror'],

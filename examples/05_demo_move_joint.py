@@ -11,6 +11,7 @@ Features:
 - Unified API for joint and gripper control
 """
 
+from numpy import True_
 import bessica_d_sdk
 from bessica_d_sdk.utils.logger import logger
 import time
@@ -43,42 +44,42 @@ def main(args):
         robot.set_home(arm="both")
         time.sleep(1)
 
-        # # --- Single-arm control examples ---
-        # # Move right arm only
-        # robot.set_robot_state(
-        #     target_joints=right_angles_deg,
-        #     arm="right",
-        #     joint_format="deg",
-        #     speed_deg_s=args.speed_deg_s,
-        #     wait_for_completion=False,
-        # )
-        # time.sleep(1)
+        # --- Single-arm control examples ---
+        # Move right arm only
+        robot.set_robot_state(
+            target_joints=right_angles_deg,
+            arm="right",
+            joint_format="deg",
+            speed_deg_s=args.speed_deg_s,
+            wait_for_completion=True,
+        )
+        time.sleep(1)
 
-        # # Move left arm only
-        # robot.set_robot_state(
-        #     target_joints=left_angles_deg,
-        #     arm="left",
-        #     joint_format="deg",
-        #     speed_deg_s=args.speed_deg_s,
-        #     wait_for_completion=False,
-        # )
-        # time.sleep(0.1)
+        # Move left arm only
+        robot.set_robot_state(
+            target_joints=left_angles_deg,
+            arm="left",
+            joint_format="deg",
+            speed_deg_s=args.speed_deg_s,
+            wait_for_completion=False,
+        )
+        time.sleep(0.1)
 
-        # robot.set_home(arm="both")
-        # time.sleep(1)
-        # # --- Dual-arm control example ---
-        # # Both arms move simultaneously; list-of-two-lists for arm="both"
-        # both_angles_deg = [left_angles_deg, right_angles_deg]
-        # robot.set_robot_state(
-        #     target_joints=both_angles_deg,
-        #     arm="both",
-        #     joint_format="deg",
-        #     speed_deg_s=args.speed_deg_s,
-        #     wait_for_completion=False,
-        # )
-        # time.sleep(1)
-        # robot.set_home(arm="both")
-        # time.sleep(0.1)
+        robot.set_home(arm="both")
+        time.sleep(1)
+        # --- Dual-arm control example ---
+        # Both arms move simultaneously; list-of-two-lists for arm="both"
+        both_angles_deg = [left_angles_deg, right_angles_deg]
+        robot.set_robot_state(
+            target_joints=both_angles_deg,
+            arm="both",
+            joint_format="deg",
+            speed_deg_s=args.speed_deg_s,
+            wait_for_completion=False,
+        )
+        time.sleep(1)
+        robot.set_home(arm="both")
+        time.sleep(0.1)
     except Exception as e:
         print(f"✗ Error: {e}")
         import traceback
