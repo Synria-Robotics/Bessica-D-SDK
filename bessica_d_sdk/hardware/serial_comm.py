@@ -257,7 +257,6 @@ class SerialComm:
                 if self._serial_data_check(candidate):
                     self._rx_buffer = self._rx_buffer[frame_length:]
                     # frames_processed += 1
-                    hex_print(logger, "candidate", list(candidate))
                     return list(candidate)
                 else:
                     # Checksum failed

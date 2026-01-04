@@ -60,10 +60,7 @@ class DataParser:
         self._joint_states = {"left": JointState([0.0]*7, 0.0, 0.0),
                               "right": JointState([0.0]*7, 0.0, 0.0)}
         self._lock = lock
-        self.direction_map = {
-            "left":  [1, -1, 1, -1, 1, 1, -1],
-            "right": [1, 1, 1, -1, 1, 1, 1]
-        }
+
         # Block order: first 14 bytes = right arm, next 14 bytes = left arm
         # Gripper: 4 bytes = right gripper (2B) + left gripper (2B)
         self._version_event = threading.Event()
@@ -336,9 +333,11 @@ class DataParser:
             
             # Extract data blocks
             right_arm_block = frame[data_start : data_start + self.PER_ARM_JOINT_BYTES]
+            # hex_print(logger, "right_arm_block", right_arm_block)
             left_arm_block = frame[data_start + self.PER_ARM_JOINT_BYTES : data_start + 2 * self.PER_ARM_JOINT_BYTES]
+            # hex_print(logger, "left_arm_block", left_arm_block)
             gripper_block = frame[data_start + 2 * self.PER_ARM_JOINT_BYTES : data_start + 2 * self.PER_ARM_JOINT_BYTES + self.GRIPPER_PAIR_BYTES]
-            hex_print(logger, "gripper_block", gripper_block)
+            # hex_print(logger, "gripper_block", gripper_block)
             run_status_byte = frame[data_start + 2 * self.PER_ARM_JOINT_BYTES + self.GRIPPER_PAIR_BYTES] if data_len >= self.JOINT_DATA_SIZE else None
             
             # Decode joint angles
@@ -414,15 +413,14 @@ class DataParser:
             lo = block[2 * i] & 0xFF
             hi = block[2 * i + 1] & 0xFF
             raw_value = lo | (hi << 8)
+            # Range check
+            if raw_value < 0 or raw_value > 4095:
+                logger.warning(f"{arm}关节{i+1}值超出范围: {raw_value} (有效范围0-4095)")
+                raw_value = max(0, min(raw_value, 4095))
             
-            if raw_value > 4095:
-                logger.warning(f"{arm}关节{i+1}值超出范围: {raw_value}")
-                return None
-            
-            angle_rad = self._value_to_radians(raw_value)
-            # Apply direction mapping
-            direction = self.direction_map[arm][i]
-            angles.append(angle_rad * direction)
+            # Directly map raw value to radians: 0–4095 -> [-π, π] 
+            angle_rad = (raw_value / 4096.0) * (2 * math.pi) - math.pi
+            angles.append(angle_rad)
         
         return angles
 
@@ -473,7 +471,7 @@ class DataParser:
 
     def _value_to_radians(self, value: int) -> float:
         """
-        将舵机值转换为弧度值 - 与ROS代码保持一致
+        将舵机值转换为弧度值
         
         Args:
             value: 舵机值(0-4095)

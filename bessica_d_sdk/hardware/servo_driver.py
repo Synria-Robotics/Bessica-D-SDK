@@ -105,10 +105,7 @@ class ServoDriver:
         self.count = 0
 
 
-        self.direction_map = {
-            "left":  [1, -1, 1, -1, 1, 1, -1],
-            "right": [1, 1, 1, -1, 1, 1, 1]
-        }
+
 
         # 状态更新线程相关
         self._update_thread = None
@@ -542,8 +539,7 @@ class ServoDriver:
         :return: Frame byte list or None if error
         """
         # Convert speed to hardware value (0-5000, where 5000 is max speed)
-        # speed_hw_value = self._deg_s_to_hardware_speed(speed_deg_s)
-        speed_hw_value = 1000
+        speed_hw_value = self._deg_s_to_hardware_speed(speed_deg_s)
         logger.info(f"speed_hw_value: {speed_hw_value}")
         # Get current state for optional values
         current_state = self.data_parser.get_joint_state(arm)
@@ -628,10 +624,9 @@ class ServoDriver:
                 effective_joints_left = joint_angles[1]  # Left arm
                 effective_joints_right = joint_angles[0]  # Right arm (protocol: right first)
             
-            # Apply direction mapping
-            right_angles = [effective_joints_right[i] * self.direction_map['right'][i] for i in range(7)]
-            left_angles = [effective_joints_left[i] * self.direction_map['left'][i] for i in range(7)]
-            
+
+            right_angles = effective_joints_right 
+            left_angles = effective_joints_left
             # Write right arm joints (7 joints * 4 bytes)
             offset = data_start
             for joint_idx in range(7):
@@ -718,7 +713,7 @@ class ServoDriver:
                 effective_joints = joint_angles
             
             # Apply direction mapping
-            mapped_angles = [effective_joints[i] * self.direction_map[arm][i] for i in range(7)]
+            mapped_angles = effective_joints
             
             # Write joints (7 joints * 4 bytes = 28 bytes)
             offset = data_start

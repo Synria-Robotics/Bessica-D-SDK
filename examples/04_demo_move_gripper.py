@@ -34,13 +34,13 @@ def main(args):
             return
         
         # Open gripper (value 1000 = fully open)
-        robot.set_robot_state(
-            target_joints=None,  # Keep current joints
-            gripper_value=1000,  # Fully open
-            arm=args.arm,
-            wait_for_completion=False,
-        )
-        time.sleep(2)
+        # robot.set_robot_state(
+        #     target_joints=None,  # Keep current joints
+        #     gripper_value=1000,  # Fully open
+        #     arm=args.arm,
+        #     wait_for_completion=False,
+        # )
+        # time.sleep(2)
         
         # Close gripper (value 0 = fully closed)
         robot.set_robot_state(

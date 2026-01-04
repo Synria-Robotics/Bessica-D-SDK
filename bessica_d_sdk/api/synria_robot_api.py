@@ -90,6 +90,7 @@ class SynriaBessicaRobotAPI:
         :return: True if connection successful
         """
         result = self.servo_driver.connect()
+        state = self.get_robot_state("joint_gripper")
         return result
 
     def disconnect(self):
@@ -122,7 +123,8 @@ class SynriaBessicaRobotAPI:
 
         # Joint and gripper are acquired together from hardware using the "joint" command
         if info_type in ("joint_gripper", "joint", "gripper"):
-            if not self.servo_driver.acquire_info("joint_gripper", wait=True, timeout=timeout):
+            if not self.servo_driver.acquire_info("joint_gripper", wait=False, timeout=timeout):
+            # if not self.servo_driver.acquire_info("joint_gripper", wait=True, timeout=timeout):
                 logger.error(f"Failed to get joint/gripper data within timeout period")
                 return None
             return self.data_parser.get_info(info_type)
@@ -386,12 +388,19 @@ class SynriaBessicaRobotAPI:
             return None
         arm = arm or "both"
         if arm == "both":
-            joints_l = self.get_joints(arm="left")
-            joints_r = self.get_joints(arm="right")
+            # Use get_robot_state to get joint angles
+            joints_dict = self.get_robot_state("joint")
+            if not joints_dict or not isinstance(joints_dict, dict):
+                logger.error("无法获取关节角度")
+                return None
+            joints_l = joints_dict.get('left')
+            joints_r = joints_dict.get('right')
+            print(f"joints_l: {joints_l}")
+            print(f"joints_r: {joints_r}")
             if not joints_l or not joints_r or not isinstance(joints_l, list) or not isinstance(joints_r, list):
                 logger.error("无法获取关节角度")
                 return None
-            # Joint angles are already in radians from get_joints()
+            # Joint angles are already in radians from get_robot_state
             result = bimanual_forward_kinematics(
                 self.left_model, self.right_model,
                 np.array(joints_l), np.array(joints_r),
@@ -416,13 +425,18 @@ class SynriaBessicaRobotAPI:
                 ],
             }
         else:
-            joints = self.get_joints(arm=arm)
+            # Use get_robot_state to get joint angles
+            joints_dict = self.get_robot_state("joint")
+            if not joints_dict or not isinstance(joints_dict, dict):
+                logger.error("无法获取关节角度")
+                return None
+            joints = joints_dict.get(arm)
             if not joints or not isinstance(joints, list):
                 logger.error("无法获取关节角度")
                 return None
             
             model = self.left_model if arm == "left" else self.right_model
-            # Joint angles are already in radians from get_joints()
+            # Joint angles are already in radians from get_robot_state
             T_fk = forward_kinematics(model, np.array(joints), return_end=True)
             pos = T_fk[:3, 3]
             rot = T_fk[:3, :3]
@@ -530,8 +544,8 @@ class SynriaBessicaRobotAPI:
                    isinstance(quaternion, list) and len(quaternion) == 2:
                     pos_left = np.array(position[0])
                     quat_left = np.array(quaternion[0])
-                    # logger.info(f"Left Arm 位置(xyz /m): {np.round(pos_left, 3).tolist()}, "
-                    #           f"四元数(qx, qy, qz, qw): {np.round(quat_left, 3).tolist()}")
+                    logger.info(f"Left Arm 位置(xyz /m): {np.round(pos_left, 3).tolist()}, "
+                              f"四元数(qx, qy, qz, qw): {np.round(quat_left, 3).tolist()}")
             
             # Display gripper (no conversion, already in 0-100 range like Alicia API)
             if gripper is not None:
@@ -551,12 +565,12 @@ class SynriaBessicaRobotAPI:
                    isinstance(quaternion, list) and len(quaternion) == 2:
                     pos_right = np.array(position[1])
                     quat_right = np.array(quaternion[1])
-                    # logger.info(f"Right Arm 位置(xyz /m): {np.round(pos_right, 3).tolist()}, "
-                    #           f"四元数(qx, qy, qz, qw): {np.round(quat_right, 3).tolist()}")
+                    logger.info(f"Right Arm 位置(xyz /m): {np.round(pos_right, 3).tolist()}, "
+                              f"四元数(qx, qy, qz, qw): {np.round(quat_right, 3).tolist()}")
             
             if gripper is not None:
                 if isinstance(gripper, tuple) and len(gripper) == 2:
-                    logger.info(f"Right Arm 夹爪状态 (0-100): {gripper[1]}")
+                    logger.info(f"Right Arm 夹爪状态 (0-1000): {gripper[1]}")
         
         def _print_single_arm_state(arm, joint_angles, pose, gripper, convert, unit, output_format):
             """Print state for single arm."""

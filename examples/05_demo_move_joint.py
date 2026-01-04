@@ -36,14 +36,15 @@ def main(args):
 
         # Example joint targets in degrees (7 DOF per arm)
         left_angles_deg = [20, 20, 20, 20, 20, 20, 20]
+        # right_angles_deg = [0, 0, 0, 0, 0, 0, 40]
         right_angles_deg = [20, 20, 20, 20, 20, 20, 20]
 
         # Move to home first
-        robot.set_home(arm="right")
-        time.sleep(5)
+        robot.set_home(arm="both")
+        time.sleep(1)
 
-        # --- Single-arm control examples ---
-        # Move right arm only
+        # # --- Single-arm control examples ---
+        # # Move right arm only
         # robot.set_robot_state(
         #     target_joints=right_angles_deg,
         #     arm="right",
@@ -51,18 +52,20 @@ def main(args):
         #     speed_deg_s=args.speed_deg_s,
         #     wait_for_completion=False,
         # )
-        # time.sleep(2)
+        # time.sleep(1)
 
-        # Move left arm only
+        # # Move left arm only
         # robot.set_robot_state(
         #     target_joints=left_angles_deg,
         #     arm="left",
         #     joint_format="deg",
         #     speed_deg_s=args.speed_deg_s,
-        #     wait_for_completion=True,
+        #     wait_for_completion=False,
         # )
-        # time.sleep(2)
+        # time.sleep(0.1)
 
+        # robot.set_home(arm="both")
+        # time.sleep(1)
         # # --- Dual-arm control example ---
         # # Both arms move simultaneously; list-of-two-lists for arm="both"
         # both_angles_deg = [left_angles_deg, right_angles_deg]
@@ -71,11 +74,11 @@ def main(args):
         #     arm="both",
         #     joint_format="deg",
         #     speed_deg_s=args.speed_deg_s,
-        #     wait_for_completion=True,
+        #     wait_for_completion=False,
         # )
-        # time.sleep(2)
+        # time.sleep(1)
         # robot.set_home(arm="both")
-        # time.sleep(2)
+        # time.sleep(0.1)
     except Exception as e:
         print(f"✗ Error: {e}")
         import traceback
@@ -91,6 +94,6 @@ if __name__ == '__main__':
     parser.add_argument('--port', type=str, default="", help="串口端口 (例如: /dev/ttyUSB0 或 COM3)")
     parser.add_argument('--robot_version', type=str, default="v1_0",  help="机械臂版本 (默认: v1_0)")
     parser.add_argument('--arm', type=str, default="both", choices=["left", "right", "both"], help="机械臂 (默认: both)")
-    parser.add_argument('--speed_deg_s', type=float, default=40.0,  help="运动速度 (度/秒, 默认: 20.0)")
+    parser.add_argument('--speed_deg_s', type=float, default=20.0,  help="运动速度 (度/秒, 默认: 20.0)")
     args = parser.parse_args()
     main(args)
