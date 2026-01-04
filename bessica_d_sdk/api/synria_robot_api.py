@@ -1,3 +1,21 @@
+# Copyright (c) 2025 Synria Robotics Co., Ltd.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+#
+# Author: Synria Robotics Team
+# Website: https://synriarobotics.ai
+
 """
 SynriaBessicaRobotAPI - User-level API (Bessica)
 
@@ -768,22 +786,36 @@ class SynriaBessicaRobotAPI:
             
             try:
                 import numpy as _np
-                from robocore.planning.trajectory import (
-                    linear_joint_trajectory as _linear_joint_trajectory,
-                    cubic_polynomial_trajectory as _cubic_polynomial_trajectory,
-                    quintic_polynomial_trajectory as _quintic_polynomial_trajectory,
-                )
+                from robocore.planning import CubicPolynomialPlanner, QuinticPolynomialPlanner
+                from robocore.utils.backend import to_numpy
+                
                 q_start_np = _np.array(q_start)
                 q_end_np = _np.array(q_end)
+                n_joints = len(q_start)
+                
                 if method == 'linear':
-                    _, q_traj, _, _ = _linear_joint_trajectory(q_start_np, q_end_np, duration, num_points)
+                    # Use cubic planner with zero velocities for linear-like interpolation
+                    planner = CubicPolynomialPlanner()
+                    trajectory = planner.plan(
+                        start=q_start_np, 
+                        end=q_end_np, 
+                        duration=duration, 
+                        num_points=num_points, 
+                        qd_start=_np.zeros(n_joints), 
+                        qd_end=_np.zeros(n_joints)
+                    )
                 elif method == 'cubic':
-                    _, q_traj, _, _ = _cubic_polynomial_trajectory(q_start_np, q_end_np, duration, num_points)
+                    planner = CubicPolynomialPlanner()
+                    trajectory = planner.plan(start=q_start_np, end=q_end_np, duration=duration, num_points=num_points)
                 elif method == 'quintic':
-                    _, q_traj, _, _ = _quintic_polynomial_trajectory(q_start_np, q_end_np, duration, num_points)
+                    planner = QuinticPolynomialPlanner()
+                    trajectory = planner.plan(start=q_start_np, end=q_end_np, duration=duration, num_points=num_points)
                 else:
                     logger.error(f"不支持的插值方法: {method}")
                     return False
+                
+                # Convert to numpy array (handles both numpy and torch backends)
+                q_traj = to_numpy(trajectory['q'])
                 delay = duration / num_points
                 for q in q_traj.tolist():
                     if not self.set_robot_state(target_joints=q, arm=arm, joint_format="rad", wait_for_completion=False):
@@ -833,31 +865,50 @@ class SynriaBessicaRobotAPI:
             
             try:
                 import numpy as _np
-                from robocore.planning.trajectory import (
-                    linear_joint_trajectory as _linear_joint_trajectory,
-                    cubic_polynomial_trajectory as _cubic_polynomial_trajectory,
-                    quintic_polynomial_trajectory as _quintic_polynomial_trajectory,
-                )
+                from robocore.planning import CubicPolynomialPlanner, QuinticPolynomialPlanner
+                from robocore.utils.backend import to_numpy
                 
                 # 为左右臂分别生成轨迹
                 q_start_left_np = _np.array(q_start_left)
                 q_end_left_np = _np.array(q_end_left)
                 q_start_right_np = _np.array(q_start_right)
                 q_end_right_np = _np.array(q_end_right)
+                n_joints = 7
                 
                 if method == 'linear':
-                    _, q_traj_left, _, _ = _linear_joint_trajectory(q_start_left_np, q_end_left_np, duration, num_points)
-                    _, q_traj_right, _, _ = _linear_joint_trajectory(q_start_right_np, q_end_right_np, duration, num_points)
+                    # Use cubic planner with zero velocities for linear-like interpolation
+                    planner = CubicPolynomialPlanner()
+                    traj_left = planner.plan(
+                        start=q_start_left_np, 
+                        end=q_end_left_np, 
+                        duration=duration, 
+                        num_points=num_points, 
+                        qd_start=_np.zeros(n_joints), 
+                        qd_end=_np.zeros(n_joints)
+                    )
+                    traj_right = planner.plan(
+                        start=q_start_right_np, 
+                        end=q_end_right_np, 
+                        duration=duration, 
+                        num_points=num_points, 
+                        qd_start=_np.zeros(n_joints), 
+                        qd_end=_np.zeros(n_joints)
+                    )
                 elif method == 'cubic':
-                    _, q_traj_left, _, _ = _cubic_polynomial_trajectory(q_start_left_np, q_end_left_np, duration, num_points)
-                    _, q_traj_right, _, _ = _cubic_polynomial_trajectory(q_start_right_np, q_end_right_np, duration, num_points)
+                    planner = CubicPolynomialPlanner()
+                    traj_left = planner.plan(start=q_start_left_np, end=q_end_left_np, duration=duration, num_points=num_points)
+                    traj_right = planner.plan(start=q_start_right_np, end=q_end_right_np, duration=duration, num_points=num_points)
                 elif method == 'quintic':
-                    _, q_traj_left, _, _ = _quintic_polynomial_trajectory(q_start_left_np, q_end_left_np, duration, num_points)
-                    _, q_traj_right, _, _ = _quintic_polynomial_trajectory(q_start_right_np, q_end_right_np, duration, num_points)
+                    planner = QuinticPolynomialPlanner()
+                    traj_left = planner.plan(start=q_start_left_np, end=q_end_left_np, duration=duration, num_points=num_points)
+                    traj_right = planner.plan(start=q_start_right_np, end=q_end_right_np, duration=duration, num_points=num_points)
                 else:
                     logger.error(f"不支持的插值方法: {method}")
                     return False
                 
+                # Convert to numpy arrays (handles both numpy and torch backends)
+                q_traj_left = to_numpy(traj_left['q'])
+                q_traj_right = to_numpy(traj_right['q'])
                 delay = duration / num_points
                 for q_left, q_right in zip(q_traj_left.tolist(), q_traj_right.tolist()):
                     # 同时发送左右臂指令
@@ -922,7 +973,8 @@ class SynriaBessicaRobotAPI:
         try:
             import numpy as _np
             from robocore.transform import quaternion_to_matrix as _quat_to_mat, make_transform as _make_tf
-            from robocore.planning.trajectory import linear_cartesian_trajectory as _linear_cartesian_trajectory
+            from robocore.planning.cartesian_space.position import LinearPositionPlanner
+            from robocore.planning.cartesian_space.orientation import SLERPPlanner
         except Exception as e:
             logger.error(f"未安装 RoboCore 或导入失败: {e}")
             return False
@@ -958,25 +1010,59 @@ class SynriaBessicaRobotAPI:
                 return False
             
             try:
-                _, _, q_traj = _linear_cartesian_trajectory(
-                    self.robot_model,
-                    pose_start,
-                    pose_end,
-                    duration,
-                    num_points=num_points,
-                    q_init=_np.array(q_init),
-                    ik_backend='numpy',
-                    ik_method=ik_method,
-                    max_iters=200,
-                    pos_tol=1e-3,
-                    ori_tol=1e-3,
-                )
+                # Generate position and orientation trajectories
+                pos_planner = LinearPositionPlanner()
+                ori_planner = SLERPPlanner()
+                
+                # Extract position and orientation from start and end poses
+                pos_start = pose_start[:3, 3]
+                pos_end = pose_end[:3, 3]
+                rot_start = pose_start[:3, :3]
+                rot_end = pose_end[:3, :3]
+                
+                # Generate position trajectory
+                pos_result = pos_planner.plan(start=pos_start, end=pos_end, duration=duration, num_points=num_points)
+                
+                # Generate orientation trajectory
+                ori_result = ori_planner.plan(start=rot_start, end=rot_end, duration=duration, num_points=num_points)
+                
+                # Combine into full pose trajectory and solve IK
+                q_traj = []
+                q_current = _np.array(q_init)
+                
+                for i in range(num_points):
+                    # Build pose matrix
+                    pos = pos_result['positions'][i]
+                    # Convert quaternion to rotation matrix
+                    from robocore.transform.conversions import quaternion_to_matrix
+                    rot = quaternion_to_matrix(ori_result['orientations'][i])
+                    pose_i = _make_tf(rot, pos)
+                    
+                    # Solve IK for this pose
+                    ik_result = inverse_kinematics(
+                        self.robot_model,
+                        pose_i,
+                        q_current,
+                        backend='numpy',
+                        method=ik_method,
+                        max_iters=200,
+                        pos_tol=1e-3,
+                        ori_tol=1e-3,
+                    )
+                    
+                    if ik_result['success']:
+                        q_traj.append(ik_result['q'])
+                        q_current = _np.array(ik_result['q'])  # Use solution as next initial guess
+                    else:
+                        logger.warning(f"IK failed at point {i}/{num_points}, using previous solution")
+                        q_traj.append(q_current.tolist())
+                
             except Exception as e:
                 logger.error(f"轨迹规划失败: {e}")
                 return False
             
             delay = duration / num_points
-            for q in q_traj.tolist():
+            for q in q_traj:
                 if not self.set_robot_state(target_joints=q, arm=arm, joint_format="rad", wait_for_completion=False):
                     return False
                 time.sleep(delay)
@@ -1035,39 +1121,90 @@ class SynriaBessicaRobotAPI:
             q_init_right = _np.array(q_init_right_raw)
             
             try:
-                # 为左右臂分别生成轨迹
-                _, _, q_traj_left = _linear_cartesian_trajectory(
-                    self.robot_model,
-                    pose_start_left,
-                    pose_end_left,
-                    duration,
-                    num_points=num_points,
-                    q_init=q_init_left,
-                    ik_backend='numpy',
-                    ik_method=ik_method,
-                    max_iters=200,
-                    pos_tol=1e-3,
-                    ori_tol=1e-3,
-                )
-                _, _, q_traj_right = _linear_cartesian_trajectory(
-                    self.robot_model,
-                    pose_start_right,
-                    pose_end_right,
-                    duration,
-                    num_points=num_points,
-                    q_init=q_init_right,
-                    ik_backend='numpy',
-                    ik_method=ik_method,
-                    max_iters=200,
-                    pos_tol=1e-3,
-                    ori_tol=1e-3,
-                )
+                # Generate position and orientation trajectories for both arms
+                pos_planner = LinearPositionPlanner()
+                ori_planner = SLERPPlanner()
+                
+                # Left arm
+                pos_start_left = pose_start_left[:3, 3]
+                pos_end_left = pose_end_left[:3, 3]
+                rot_start_left = pose_start_left[:3, :3]
+                rot_end_left = pose_end_left[:3, :3]
+                
+                pos_result_left = pos_planner.plan(start=pos_start_left, end=pos_end_left, duration=duration, num_points=num_points)
+                ori_result_left = ori_planner.plan(start=rot_start_left, end=rot_end_left, duration=duration, num_points=num_points)
+                
+                # Right arm
+                pos_start_right = pose_start_right[:3, 3]
+                pos_end_right = pose_end_right[:3, 3]
+                rot_start_right = pose_start_right[:3, :3]
+                rot_end_right = pose_end_right[:3, :3]
+                
+                pos_result_right = pos_planner.plan(start=pos_start_right, end=pos_end_right, duration=duration, num_points=num_points)
+                ori_result_right = ori_planner.plan(start=rot_start_right, end=rot_end_right, duration=duration, num_points=num_points)
+                
+                # Solve IK for both arms
+                q_traj_left = []
+                q_traj_right = []
+                q_current_left = q_init_left.copy()
+                q_current_right = q_init_right.copy()
+                
+                for i in range(num_points):
+                    # Left arm pose
+                    pos_left = pos_result_left['positions'][i]
+                    from robocore.transform.conversions import quaternion_to_matrix
+                    rot_left = quaternion_to_matrix(ori_result_left['orientations'][i])
+                    pose_left = _make_tf(rot_left, pos_left)
+                    
+                    # Right arm pose
+                    pos_right = pos_result_right['positions'][i]
+                    rot_right = quaternion_to_matrix(ori_result_right['orientations'][i])
+                    pose_right = _make_tf(rot_right, pos_right)
+                    
+                    # Solve IK for left arm
+                    ik_result_left = inverse_kinematics(
+                        self.left_model,
+                        pose_left,
+                        q_current_left,
+                        backend='numpy',
+                        method=ik_method,
+                        max_iters=200,
+                        pos_tol=1e-3,
+                        ori_tol=1e-3,
+                    )
+                    
+                    # Solve IK for right arm
+                    ik_result_right = inverse_kinematics(
+                        self.right_model,
+                        pose_right,
+                        q_current_right,
+                        backend='numpy',
+                        method=ik_method,
+                        max_iters=200,
+                        pos_tol=1e-3,
+                        ori_tol=1e-3,
+                    )
+                    
+                    if ik_result_left['success']:
+                        q_traj_left.append(ik_result_left['q'])
+                        q_current_left = _np.array(ik_result_left['q'])
+                    else:
+                        logger.warning(f"Left arm IK failed at point {i}/{num_points}")
+                        q_traj_left.append(q_current_left.tolist())
+                    
+                    if ik_result_right['success']:
+                        q_traj_right.append(ik_result_right['q'])
+                        q_current_right = _np.array(ik_result_right['q'])
+                    else:
+                        logger.warning(f"Right arm IK failed at point {i}/{num_points}")
+                        q_traj_right.append(q_current_right.tolist())
+                
             except Exception as e:
                 logger.error(f"轨迹规划失败: {e}")
                 return False
             
             delay = duration / num_points
-            for q_left, q_right in zip(q_traj_left.tolist(), q_traj_right.tolist()):
+            for q_left, q_right in zip(q_traj_left, q_traj_right):
                 # 同时发送左右臂指令
                 success = self.set_robot_state(target_joints=[q_left, q_right], arm="both", joint_format="rad", wait_for_completion=False)
                 if not success:

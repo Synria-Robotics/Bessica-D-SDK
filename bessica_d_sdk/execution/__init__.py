@@ -16,10 +16,16 @@
 # Author: Synria Robotics Team
 # Website: https://synriarobotics.ai
 
+"""Trajectory Executor for Dual-Arm Robot Control
 
-from .logger import logger, beauty_print
+This module provides specialized executors for joint space and Cartesian space trajectories
+for dual-arm robots (Bessica).
+"""
+
+from .trajectory_executor import JointTrajectoryExecutor, CartesianTrajectoryExecutor
 
 __all__ = [
-    "logger",
-    "beauty_print",
+    'JointTrajectoryExecutor',
+    'CartesianTrajectoryExecutor',
 ]
+

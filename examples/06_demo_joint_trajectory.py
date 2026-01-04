@@ -27,14 +27,10 @@ def main(args):
         baudrate=args.baudrate,
         robot_version=args.robot_version,
         debug_mode=False,
-        speed_deg_s=args.speed_deg_s
+        speed_deg_s=args.speed_deg_s,
     )
     
     try:
-        # Connect to robot
-        if not robot.connect():
-            print("✗ Connection failed, please check serial port settings")
-            return
         
         print("=" * 60)
         print("轨迹控制演示")
@@ -221,7 +217,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Trajectory planning and execution demo")
     
     # Robot configuration
-    parser.add_argument('--port', type=str, default="COM1", help="串口端口 (例如: /dev/ttyUSB0 或 COM3)")
+    parser.add_argument('--port', type=str, default="", help="串口端口 (例如: /dev/ttyUSB0 或 COM3)")
     parser.add_argument('--baudrate', type=int, default=1000000,  help="波特率 (默认: 1000000)")
     parser.add_argument('--robot_version', type=str, default="v1_0",  help="机械臂版本 (默认: v1_0)")
     parser.add_argument('--speed_deg_s', type=float, default=20.0,  help="运动速度 (度/秒, 默认: 20.0)")

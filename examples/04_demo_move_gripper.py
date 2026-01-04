@@ -1,8 +1,22 @@
+# Copyright (c) 2025 Synria Robotics Co., Ltd.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+#
+# Author: Synria Robotics Team
+# Website: https://synriarobotics.ai
 """
 Demo: Gripper control using unified set_robot_state API
-
-Copyright (c) 2025 Synria Robotics Co., Ltd.
-Licensed under GPL v3.0
 
 Features:
 - Open/close gripper (value 0-1000, where 1000 is fully open)
@@ -34,13 +48,13 @@ def main(args):
             return
         
         # Open gripper (value 1000 = fully open)
-        # robot.set_robot_state(
-        #     target_joints=None,  # Keep current joints
-        #     gripper_value=1000,  # Fully open
-        #     arm=args.arm,
-        #     wait_for_completion=False,
-        # )
-        # time.sleep(2)
+        robot.set_robot_state(
+            target_joints=None,  # Keep current joints
+            gripper_value=1000,  # Fully open
+            arm=args.arm,
+            wait_for_completion=False,
+        )
+        time.sleep(2)
         
         # Close gripper (value 0 = fully closed)
         robot.set_robot_state(
