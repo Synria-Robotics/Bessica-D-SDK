@@ -34,6 +34,52 @@ from robocore.utils.backend import to_numpy
 from robocore.transform import make_transform, quaternion_to_matrix, rpy_to_matrix, matrix_to_quaternion
 
 
+def _get_motion_file_dir() -> str:
+    """Get the motion_file directory path relative to examples folder.
+    
+    :return: Absolute path to motion_files directory
+    """
+    # Get the directory where this file is located
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    # Go up to bessica_d_sdk, then to Bessica-D-SDK, then to examples/motion_files
+    # Structure: Bessica-D-SDK/bessica_d_sdk/utils/trajectory_utils.py
+    # Target: Bessica-D-SDK/examples/motion_files
+    # current_dir = .../Bessica-D-SDK/bessica_d_sdk/utils
+    utils_dir = current_dir  # .../Bessica-D-SDK/bessica_d_sdk/utils
+    sdk_dir = os.path.dirname(utils_dir)  # .../Bessica-D-SDK/bessica_d_sdk
+    sdk_root = os.path.dirname(sdk_dir)  # .../Bessica-D-SDK
+    motion_file_dir = os.path.join(sdk_root, "examples", "motion_files")
+    return motion_file_dir
+
+
+def _resolve_waypoints_path(file_path: str, create_dir: bool = False) -> str:
+    """Resolve waypoints file path, handling relative paths and default motion_file folder.
+    
+    :param file_path: File path (can be relative or absolute)
+    :param create_dir: If True, create the directory if it doesn't exist
+    :return: Resolved absolute file path
+    """
+    # If absolute path, use as-is
+    if os.path.isabs(file_path):
+        if create_dir:
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        return file_path
+    
+    # If relative path, check if it's just a filename
+    if os.path.dirname(file_path) == "":
+        # Just a filename, put it in motion_file folder
+        motion_file_dir = _get_motion_file_dir()
+        if create_dir:
+            os.makedirs(motion_file_dir, exist_ok=True)
+        return os.path.join(motion_file_dir, file_path)
+    else:
+        # Relative path with directory, resolve relative to current working directory
+        resolved = os.path.abspath(file_path)
+        if create_dir:
+            os.makedirs(os.path.dirname(resolved), exist_ok=True)
+        return resolved
+
+
 def record_waypoints_manual(controller,
                             get_state_fn: Optional[Callable] = None,
                             format_fn: Optional[Callable] = None,
@@ -71,19 +117,29 @@ def record_waypoints_manual(controller,
                 # 默认：记录关节角度和夹爪状态（使用统一API一次性获取）
                 if arm == "both":
                     robot_state = controller.get_robot_state("joint_gripper")
-                    if robot_state is not None:
-                        joints_dict = robot_state.angles if isinstance(robot_state.angles, dict) else {'left': robot_state.angles, 'right': robot_state.angles}
-                        gripper_dict = robot_state.gripper if isinstance(robot_state.gripper, dict) else {'left': robot_state.gripper, 'right': robot_state.gripper}
-                        state = {"t": time.time(), "q_left": joints_dict.get('left'), "q_right": joints_dict.get('right'), 
-                                "grip_left": gripper_dict.get('left', 0.0), "grip_right": gripper_dict.get('right', 0.0)}
+                    if robot_state is not None and isinstance(robot_state, dict):
+                        left_js = robot_state.get('left')
+                        right_js = robot_state.get('right')
+                        if left_js is not None and right_js is not None:
+                            state = {
+                                "t": time.time(), 
+                                "q_left": left_js.angles, 
+                                "q_right": right_js.angles, 
+                                "grip_left": left_js.gripper, 
+                                "grip_right": right_js.gripper
+                            }
+                        else:
+                            state = None
                     else:
                         state = None
                 else:
-                    robot_state = controller.get_robot_state("joint_gripper", arm=arm)
-                    if robot_state is not None:
-                        joints = robot_state.angles
-                        gripper = robot_state.gripper
-                        state = {"t": time.time(), "q": joints, "grip": gripper} if joints is not None else None
+                    robot_state = controller.get_robot_state("joint_gripper")
+                    if robot_state is not None and isinstance(robot_state, dict):
+                        js = robot_state.get(arm)
+                        if js is not None:
+                            state = {"t": time.time(), "q": js.angles, "grip": js.gripper}
+                        else:
+                            state = None
                     else:
                         state = None
 
@@ -115,17 +171,29 @@ def record_waypoints_manual(controller,
 def load_joint_waypoints_from_file(file_path: str, arm: str = "both") -> Tuple[Union[np.ndarray, Dict[str, np.ndarray]], Optional[Union[np.ndarray, Dict[str, np.ndarray]]]]:
     """Load joint waypoints from JSON file (supports dual-arm).
     
-    :param file_path: Path to JSON file containing joint waypoints
+    :param file_path: Path to JSON file containing joint waypoints (relative paths will be searched in examples/motion_files/)
     :param arm: Arm to load, "left", "right", or "both"
     :return: Tuple of (waypoints_array, gripper_values) where:
              - For single arm: waypoints_array [n_waypoints, n_dof], gripper_values [n_waypoints] or None
              - For dual arm: waypoints_dict {'left': [n_waypoints, n_dof], 'right': [n_waypoints, n_dof]}, 
                             gripper_dict {'left': [n_waypoints], 'right': [n_waypoints]} or None
     """
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"Waypoint file not found: {file_path}")
+    # Resolve path (try motion_files folder for relative paths)
+    resolved_path = _resolve_waypoints_path(file_path, create_dir=False)
     
-    with open(file_path, 'r') as f:
+    # If file not found in motion_files, try original path (for backward compatibility)
+    if not os.path.exists(resolved_path):
+        # Try original path if it was a relative path
+        if not os.path.isabs(file_path):
+            original_path = os.path.abspath(file_path)
+            if os.path.exists(original_path):
+                resolved_path = original_path
+            else:
+                raise FileNotFoundError(f"Waypoint file not found: {resolved_path} (also tried: {original_path})")
+        else:
+            raise FileNotFoundError(f"Waypoint file not found: {resolved_path}")
+    
+    with open(resolved_path, 'r') as f:
         data = json.load(f)
     
     waypoints_left = []
@@ -225,10 +293,13 @@ def save_joint_waypoints_to_file(waypoints: Union[np.ndarray, Dict[str, np.ndarr
     """Save joint waypoints to JSON file (supports dual-arm).
     
     :param waypoints: For single arm: Array [n_waypoints, n_dof]. For dual arm: Dict with 'left' and 'right' keys
-    :param file_path: Path to save JSON file
+    :param file_path: Path to save JSON file (relative paths will be saved to examples/motion_file/)
     :param gripper_values: For single arm: Optional array [n_waypoints]. For dual arm: Optional Dict with 'left' and 'right' keys
     :param arm: Arm mode, "left", "right", or "both"
     """
+    # Resolve path and create directory if needed
+    resolved_path = _resolve_waypoints_path(file_path, create_dir=True)
+    
     waypoints_list = []
     
     if isinstance(waypoints, dict):
@@ -256,12 +327,12 @@ def save_joint_waypoints_to_file(waypoints: Union[np.ndarray, Dict[str, np.ndarr
             else:
                 waypoints_list.append(wp_list)
     
-    with open(file_path, 'w') as f:
+    with open(resolved_path, 'w') as f:
         json.dump(waypoints_list, f, indent=2)
     
     gripper_info = f" (with gripper)" if gripper_values is not None else ""
     arm_info = f" ({arm})" if arm != "both" else " (dual-arm)"
-    beauty_print(f"Saved {len(waypoints_list)} waypoints{gripper_info}{arm_info} to {file_path}", type="success")
+    beauty_print(f"Saved {len(waypoints_list)} waypoints{gripper_info}{arm_info} to {resolved_path}", type="success")
 
 
 def record_joint_waypoints_manual(robot, arm: str = "both") -> Tuple[Optional[Union[np.ndarray, Dict[str, np.ndarray]]], Optional[Union[np.ndarray, Dict[str, np.ndarray]]]]:
@@ -277,30 +348,50 @@ def record_joint_waypoints_manual(robot, arm: str = "both") -> Tuple[Optional[Un
     # Define custom state getter for joint waypoints
     def get_joint_state(controller, arm: str = "both"):
         if arm == "both":
-            # Get both arms
+            # Get both arms - returns dict with 'left' and 'right' keys, each containing JointState
             robot_state = controller.get_robot_state("joint_gripper")
             if robot_state is None:
                 beauty_print("✗ 无法获取当前关节角度和夹爪状态", type="warning")
                 return None
             
-            joints_dict = robot_state.angles if isinstance(robot_state.angles, dict) else {'left': robot_state.angles, 'right': robot_state.angles}
-            gripper_dict = robot_state.gripper if isinstance(robot_state.gripper, dict) else {'left': robot_state.gripper, 'right': robot_state.gripper}
+            # robot_state is a dict: {'left': JointState(...), 'right': JointState(...)}
+            if not isinstance(robot_state, dict):
+                beauty_print("✗ 无法获取当前关节角度和夹爪状态", type="warning")
+                return None
             
+            left_js = robot_state.get('left')
+            right_js = robot_state.get('right')
+            
+            if left_js is None or right_js is None:
+                beauty_print("✗ 无法获取当前关节角度和夹爪状态", type="warning")
+                return None
+            
+            # Extract from JointState objects
             return {
-                "q_left": to_numpy(joints_dict.get('left')),
-                "q_right": to_numpy(joints_dict.get('right')),
-                "grip_left": float(gripper_dict.get('left', 0.0)),
-                "grip_right": float(gripper_dict.get('right', 0.0))
+                "q_left": to_numpy(left_js.angles),
+                "q_right": to_numpy(right_js.angles),
+                "grip_left": float(left_js.gripper),
+                "grip_right": float(right_js.gripper)
             }
         else:
-            # Single arm
-            robot_state = controller.get_robot_state("joint_gripper", arm=arm)
+            # Single arm - get_robot_state returns dict, extract the specific arm
+            robot_state = controller.get_robot_state("joint_gripper")
             if robot_state is None:
                 beauty_print("✗ 无法获取当前关节角度和夹爪状态", type="warning")
                 return None
             
-            joints = to_numpy(robot_state.angles)
-            gripper = robot_state.gripper
+            # robot_state is a dict: {'left': JointState(...), 'right': JointState(...)}
+            if not isinstance(robot_state, dict):
+                beauty_print("✗ 无法获取当前关节角度和夹爪状态", type="warning")
+                return None
+            
+            js = robot_state.get(arm)
+            if js is None:
+                beauty_print("✗ 无法获取当前关节角度和夹爪状态", type="warning")
+                return None
+            
+            joints = to_numpy(js.angles)
+            gripper = js.gripper
             return {"q": joints, "grip": float(gripper)}
     
     # Define custom formatter for joint waypoints
@@ -351,10 +442,293 @@ def record_joint_waypoints_manual(robot, arm: str = "both") -> Tuple[Optional[Un
             else:
                 beauty_print("✗ 无法获取当前关节角度和夹爪状态", type="warning")
                 return None, None
-        return waypoints_left, waypoints_right, gripper_values_left, gripper_values_right
+        waypoints = {'left': np.array(waypoints_left), 'right': np.array(waypoints_right)}
+        gripper_waypoints = {'left': np.array(gripper_values_left), 'right': np.array(gripper_values_right)}
+        return waypoints, gripper_waypoints
     else:
         waypoints = []
         gripper_values = []
         for point in recorded_data:
             if point and 'q' in point:
                 waypoints.append(to_numpy(point['q']))
+                gripper_values.append(float(point.get('grip', 0.0)))
+        
+        return np.array(waypoints), np.array(gripper_values) if gripper_values else None
+
+
+def load_or_generate_joint_waypoints(robot, robot_model, args, arm: str = "both") -> Tuple[Union[np.ndarray, Dict[str, np.ndarray]], Optional[Union[np.ndarray, Dict[str, np.ndarray]]]]:
+    """Load or generate joint waypoints (supports single-arm and dual-arm).
+    
+    :param robot: Robot controller instance
+    :param robot_model: Robot model instance (BimanualRobotModel for dual-arm)
+    :param args: Command line arguments
+    :param arm: Arm mode, "left", "right", or "both"
+    :return: Tuple of (waypoints, gripper_waypoints)
+    """
+    from robocore.utils.backend import to_numpy
+    
+    if args.waypoints_file:
+        beauty_print(f"Loading waypoints from file: {args.waypoints_file}")
+        waypoints, gripper_waypoints = load_joint_waypoints_from_file(args.waypoints_file, arm=arm)
+        beauty_print(f"Successfully loaded waypoints from file")
+        if gripper_waypoints is not None:
+            if isinstance(gripper_waypoints, dict):
+                beauty_print(f"Gripper values loaded: left={len(gripper_waypoints['left'])}, right={len(gripper_waypoints['right'])}")
+            else:
+                beauty_print(f"Gripper values loaded: {len(gripper_waypoints)} waypoints")
+        return waypoints, gripper_waypoints
+    
+    # Generate random waypoints
+    beauty_print(f"Generating {args.num_waypoints} random waypoints within joint limits...")
+    
+    if arm == "both":
+        waypoints_left = []
+        waypoints_right = []
+        gripper_values_left = []
+        gripper_values_right = []
+        
+        # Get current joint angles as starting point (optional)
+        if args.use_current_joints:
+            robot_state = robot.get_robot_state("joint_gripper")
+            if robot_state is not None and isinstance(robot_state, dict):
+                left_js = robot_state.get('left')
+                right_js = robot_state.get('right')
+                if left_js is not None and right_js is not None:
+                    q_start_left = to_numpy(left_js.angles)
+                    q_start_right = to_numpy(right_js.angles)
+                    g_start_left = float(left_js.gripper)
+                    g_start_right = float(right_js.gripper)
+                
+                waypoints_left.append(q_start_left)
+                waypoints_right.append(q_start_right)
+                gripper_values_left.append(g_start_left)
+                gripper_values_right.append(g_start_right)
+                
+                beauty_print(f"Using current joint angles and gripper as first waypoint:")
+                print(f"  Left joints (rad): {beauty_print_array(q_start_left)}")
+                print(f"  Right joints (rad): {beauty_print_array(q_start_right)}")
+                print(f"  Left gripper: {g_start_left:.1f}, Right gripper: {g_start_right:.1f}")
+                num_random = args.num_waypoints - 1
+            else:
+                beauty_print("✗ 无法获取当前关节角度，使用随机生成", type="warning")
+                num_random = args.num_waypoints
+        else:
+            num_random = args.num_waypoints
+        
+        # Generate random waypoints
+        for i in range(num_random):
+            waypoint_seed = args.seed + i if args.seed is not None else None
+            # Use left_model for generating waypoints (both arms have same structure)
+            q_left = to_numpy(robot_model.left_model.random_q(seed=waypoint_seed, scale=args.joint_scale))
+            q_right = to_numpy(robot_model.right_model.random_q(seed=waypoint_seed, scale=args.joint_scale))
+            waypoints_left.append(q_left)
+            waypoints_right.append(q_right)
+            
+            # Random gripper values
+            if waypoint_seed is not None:
+                np.random.seed(waypoint_seed)
+            gripper_values_left.append(float(np.random.uniform(0, 1000)))
+            gripper_values_right.append(float(np.random.uniform(0, 1000)))
+        
+        waypoints = {'left': np.array(waypoints_left), 'right': np.array(waypoints_right)}
+        gripper_waypoints = {'left': np.array(gripper_values_left), 'right': np.array(gripper_values_right)}
+        return waypoints, gripper_waypoints
+    else:
+        # Single-arm mode
+        waypoints = []
+        gripper_waypoints = []
+        
+        # Get current joint angles as starting point (optional)
+        if args.use_current_joints:
+            robot_state = robot.get_robot_state("joint_gripper")
+            if robot_state is not None and isinstance(robot_state, dict):
+                js = robot_state.get(arm)
+                if js is not None:
+                    q_start = to_numpy(js.angles)
+                    g_start = float(js.gripper) if js.gripper is not None else 500.0
+                    waypoints.append(q_start)
+                    gripper_waypoints.append(g_start)
+                    beauty_print(f"Using current joint angles and gripper as first waypoint ({arm}):")
+                    print(f"  Current joints (rad): {beauty_print_array(q_start)}")
+                    print(f"  Current joints (deg): {beauty_print_array(np.rad2deg(q_start))}")
+                    print(f"  Current gripper: {g_start:.1f} (0-1000)")
+                    num_random = args.num_waypoints - 1
+                else:
+                    beauty_print("✗ 无法获取当前关节角度，使用随机生成", type="warning")
+                    num_random = args.num_waypoints
+            else:
+                beauty_print("✗ 无法获取当前关节角度，使用随机生成", type="warning")
+                num_random = args.num_waypoints
+        else:
+            num_random = args.num_waypoints
+        
+        # Generate random waypoints
+        model = robot_model.left_model if arm == "left" else robot_model.right_model
+        for i in range(num_random):
+            waypoint_seed = args.seed + i if args.seed is not None else None
+            q = to_numpy(model.random_q(seed=waypoint_seed, scale=args.joint_scale))
+            waypoints.append(q)
+            # Random gripper value
+            if waypoint_seed is not None:
+                np.random.seed(waypoint_seed)
+            gripper_waypoints.append(float(np.random.uniform(0, 1000)))
+        
+        return np.array(waypoints), np.array(gripper_waypoints) if gripper_waypoints else None
+
+
+def display_joint_waypoints(waypoints: Union[np.ndarray, Dict[str, np.ndarray]], 
+                           gripper_waypoints: Optional[Union[np.ndarray, Dict[str, np.ndarray]]] = None):
+    """Display joint waypoints information (supports single-arm and dual-arm).
+    
+    :param waypoints: For single arm: Array [n_waypoints, n_dof].
+                      For dual arm: Dict with 'left' and 'right' keys
+    :param gripper_waypoints: For single arm: Optional array [n_waypoints].
+                              For dual arm: Optional Dict with 'left' and 'right' keys
+    """
+    if isinstance(waypoints, dict):
+        beauty_print(f"Waypoints (dual-arm): {len(waypoints['left'])}")
+        for i in range(len(waypoints['left'])):
+            print(f"  Waypoint {i+1}:")
+            print(f"    Left:  {beauty_print_array(waypoints['left'][i])} (rad)")
+            print(f"           {beauty_print_array(np.rad2deg(waypoints['left'][i]))} (deg)")
+            print(f"    Right: {beauty_print_array(waypoints['right'][i])} (rad)")
+            print(f"           {beauty_print_array(np.rad2deg(waypoints['right'][i]))} (deg)")
+            if gripper_waypoints is not None and isinstance(gripper_waypoints, dict):
+                if i < len(gripper_waypoints['left']):
+                    print(f"    Gripper: Left={gripper_waypoints['left'][i]:.1f}, Right={gripper_waypoints['right'][i]:.1f}")
+    else:
+        beauty_print(f"Waypoints: {len(waypoints)}")
+        for i, wp in enumerate(waypoints):
+            print(f"  Waypoint {i+1}: {beauty_print_array(wp)} (rad)")
+            print(f"              {beauty_print_array(np.rad2deg(wp))} (deg)")
+            if gripper_waypoints is not None and i < len(gripper_waypoints):
+                print(f"              夹爪: {gripper_waypoints[i]:.1f} (0-1000)")
+
+
+def display_joint_trajectory_stats(trajectory: dict, arm: str = "both"):
+    """Display joint trajectory statistics (supports single-arm and dual-arm).
+    
+    :param trajectory: Trajectory dictionary with 't', 'q', 'qd', 'qdd', etc.
+    :param arm: Arm mode, "left", "right", or "both"
+    """
+    beauty_print(f"Trajectory generated:")
+    print(f"  Duration: {trajectory['t'][-1]:.3f} s")
+    
+    if arm == "both" and 'q_left' in trajectory:
+        print(f"  Points: {len(trajectory['t'])}")
+        print(f"  Left arm - Max velocity: {np.max(np.abs(trajectory['qd_left'])):.3f} rad/s")
+        print(f"  Left arm - Max acceleration: {np.max(np.abs(trajectory['qdd_left'])):.3f} rad/s²")
+        print(f"  Right arm - Max velocity: {np.max(np.abs(trajectory['qd_right'])):.3f} rad/s")
+        print(f"  Right arm - Max acceleration: {np.max(np.abs(trajectory['qdd_right'])):.3f} rad/s²")
+        
+        if 'qddd_left' in trajectory:
+            print(f"  Left arm - Max jerk: {np.max(np.abs(trajectory['qddd_left'])):.3f} rad/s³")
+        if 'qddd_right' in trajectory:
+            print(f"  Right arm - Max jerk: {np.max(np.abs(trajectory['qddd_right'])):.3f} rad/s³")
+        
+        # Display gripper trajectory if available
+        if 'gripper_left' in trajectory or 'gripper_right' in trajectory:
+            beauty_print(f"Gripper trajectory interpolated: {len(trajectory['t'])} points")
+            if 'gripper_left' in trajectory:
+                print(f"  Left gripper range: [{np.min(trajectory['gripper_left']):.1f}, {np.max(trajectory['gripper_left']):.1f}]")
+            if 'gripper_right' in trajectory:
+                print(f"  Right gripper range: [{np.min(trajectory['gripper_right']):.1f}, {np.max(trajectory['gripper_right']):.1f}]")
+    else:
+        print(f"  Points: {len(trajectory['t'])}")
+        print(f"  Max velocity: {np.max(np.abs(trajectory['qd'])):.3f} rad/s")
+        print(f"  Max acceleration: {np.max(np.abs(trajectory['qdd'])):.3f} rad/s²")
+        if 'qddd' in trajectory:
+            print(f"  Max jerk: {np.max(np.abs(trajectory['qddd'])):.3f} rad/s³")
+        
+        # Display gripper trajectory if available
+        if 'gripper' in trajectory:
+            beauty_print(f"Gripper trajectory interpolated: {len(trajectory['gripper'])} points")
+            print(f"  Gripper range: [{np.min(trajectory['gripper']):.1f}, {np.max(trajectory['gripper']):.1f}]")
+
+
+def handle_waypoint_recording(robot, args, waypoint_type: str = 'joint', arm: str = "both") -> Tuple[Optional[Union[np.ndarray, Dict[str, np.ndarray]]], Optional[Union[np.ndarray, Dict[str, np.ndarray]]]]:
+    """Handle waypoint recording mode (common logic for both joint and Cartesian).
+    
+    :param robot: Robot controller instance
+    :param args: Command line arguments
+    :param waypoint_type: 'joint' or 'cartesian'
+    :param arm: Arm mode, "left", "right", or "both"
+    :return: Tuple of (waypoints, gripper_values) where gripper_values is None for Cartesian
+    """
+    waypoints = None
+    gripper_waypoints = None
+    
+    # Record by default unless --no-record is specified or --waypoints-file is provided
+    should_record = not args.no_record and args.waypoints_file is None
+    if should_record:
+        if waypoint_type == 'joint':
+            beauty_print("[0] Recording Joint Waypoints", type="module", centered=False)
+            waypoints, gripper_waypoints = record_joint_waypoints_manual(robot, arm=arm)
+        
+        if waypoints is None:
+            robot.disconnect()
+            return None, None
+        
+        # Save to file if specified
+        if args.save_file:
+            if waypoint_type == 'joint':
+                save_joint_waypoints_to_file(waypoints, args.save_file, gripper_waypoints, arm=arm)
+            beauty_print(f"Waypoints saved to {args.save_file}", type="success")
+        else:
+            beauty_print("No save file specified. Use --save-file to save waypoints.", type="warning")
+        
+        # Ask if user wants to execute trajectory
+        user_input = input("\nExecute trajectory with recorded waypoints? (y/n): ").strip().lower()
+        if user_input != 'y':
+            beauty_print("Exiting without execution.", type="info")
+            robot.disconnect()
+            return None, None
+    
+    return waypoints, gripper_waypoints
+
+
+def plot_trajectory(trajectory: dict, waypoints: Union[np.ndarray, Dict[str, np.ndarray]], 
+                   plot_type: str = 'joint', 
+                   joint_angles: Optional[Union[np.ndarray, Dict[str, np.ndarray]]] = None, 
+                   ik_results: Optional[list] = None,
+                   arm: str = "both"):
+    """Plot trajectory visualization (supports single-arm and dual-arm).
+    
+    :param trajectory: Trajectory dictionary
+    :param waypoints: Waypoints array or dict
+    :param plot_type: 'joint' or 'cartesian'
+    :param joint_angles: Optional joint angles for Cartesian plotting
+    :param ik_results: Optional IK results for Cartesian plotting
+    :param arm: Arm mode, "left", "right", or "both"
+    """
+    try:
+        import matplotlib.pyplot as plt
+        if plot_type == 'joint':
+            from robocore.planning import plot_joint_trajectory
+            if isinstance(waypoints, dict):
+                # Dual-arm: create separate trajectory dicts for each arm and plot separately
+                traj_left = {
+                    't': trajectory['t'],
+                    'q': trajectory['q_left'],
+                    'qd': trajectory['qd_left'],
+                    'qdd': trajectory['qdd_left']
+                }
+                traj_right = {
+                    't': trajectory['t'],
+                    'q': trajectory['q_right'],
+                    'qd': trajectory['qd_right'],
+                    'qdd': trajectory['qdd_right']
+                }
+                # Plot left arm first
+                plot_joint_trajectory(traj_left, waypoints['left'])
+                # Plot right arm (will be on same figure)
+                plot_joint_trajectory(traj_right, waypoints['right'])
+            else:
+                plot_joint_trajectory(trajectory, waypoints)
+        else:  # cartesian
+            from robocore.planning import plot_cartesian_with_ik
+            plot_cartesian_with_ik(trajectory, waypoints, joint_angles, ik_results)
+        plt.show(block=False)
+        plt.pause(0.1)
+    except ImportError:
+        beauty_print("matplotlib not installed. Skipping plots.", type="warning")

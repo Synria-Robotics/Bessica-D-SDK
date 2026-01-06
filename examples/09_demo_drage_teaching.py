@@ -39,9 +39,7 @@ def main(args):
     """Drag teaching mode demo."""
     robot = bessica_d_sdk.create_robot(
         port=args.port,
-        baudrate=args.baudrate,
         robot_version=args.robot_version,
-        debug_mode=False
     )
 
     if not robot.connect():
@@ -83,7 +81,6 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description="拖拽示教模式")
     parser.add_argument('--port', type=str, default="", help="串口端口 (例如: /dev/ttyUSB0 或 COM3)")
-    parser.add_argument('--baudrate', type=int, default=1000000, help="波特率 (默认: 1000000)")
-    parser.add_argument('--robot_version', type=str, default="v1_0",  help="机械臂版本 (默认: v1_0)")
+    parser.add_argument('--robot_version', type=str, default="v1_1",  help="机械臂版本 (默认: v1_1)")
     args = parser.parse_args()
     main(args)

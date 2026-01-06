@@ -34,7 +34,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
-
+examples/motion_files/
 # IDE / Editor specific
 .vscode/
 .idea/

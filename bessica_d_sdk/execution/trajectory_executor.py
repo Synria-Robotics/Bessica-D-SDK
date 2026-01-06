@@ -142,8 +142,9 @@ class _BaseTrajectoryExecutor:
             beauty_print(f"Trajectory duration: {duration:.3f} s")
             beauty_print(f"Control frequency: {control_freq:.1f} Hz")
         
-        # Move to first point with wait
-        beauty_print("Moving to starting position...")
+        # Move to first point with wait (if requested)
+        if initial_wait:
+            beauty_print("Moving to starting position...")
         if is_dual_arm:
             first_gripper = [int(g_left[0]) if g_left is not None else None,
                            int(g_right[0]) if g_right is not None else None]
@@ -154,7 +155,7 @@ class _BaseTrajectoryExecutor:
                 joint_format='rad',
                 speed_deg_s=self.speed_deg_s,
                 tolerance=initial_tolerance,
-                wait_for_completion=initial_wait,
+                    wait_for_completion=True,
                 timeout=self.timeout
             )
         else:
@@ -166,19 +167,42 @@ class _BaseTrajectoryExecutor:
                 joint_format='rad',
                 speed_deg_s=self.speed_deg_s,
                 tolerance=initial_tolerance,
-                wait_for_completion=initial_wait,
+                    wait_for_completion=True,
                 timeout=self.timeout
             )
         
         if not success:
-            beauty_print("Failed to reach starting position", type="error")
-            return {
-                'success': False,
-                'executed': 0,
-                'failed': 1,
-                'total': n_points,
-                'duration': 0.0
-            }
+                beauty_print(f"Warning: Failed to reach starting position within tolerance ({initial_tolerance:.4f} rad)", type="warning")
+                beauty_print("Continuing with trajectory execution anyway...", type="warning")
+                # Don't return error, just continue - the robot will try to follow the trajectory
+        else:
+            # Just send the command without waiting
+            beauty_print("Sending starting position command (not waiting for completion)...")
+            if is_dual_arm:
+                first_gripper = [int(g_left[0]) if g_left is not None else None,
+                               int(g_right[0]) if g_right is not None else None]
+                self.robot.set_robot_state(
+                    target_joints=[q_left[0].tolist(), q_right[0].tolist()],
+                    gripper_value=first_gripper,
+                    arm="both",
+                    joint_format='rad',
+                    speed_deg_s=self.speed_deg_s,
+                    tolerance=initial_tolerance,
+                    wait_for_completion=False,
+                    timeout=self.timeout
+                )
+            else:
+                first_gripper = int(g_single[0]) if g_single is not None else None
+                self.robot.set_robot_state(
+                    target_joints=q_single[0].tolist(),
+                    gripper_value=first_gripper,
+                    arm=self.arm,
+                    joint_format='rad',
+                    speed_deg_s=self.speed_deg_s,
+                    tolerance=initial_tolerance,
+                    wait_for_completion=False,
+                    timeout=self.timeout
+                )
         
         time.sleep(self.initial_delay)
         

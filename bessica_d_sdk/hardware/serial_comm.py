@@ -180,7 +180,8 @@ class SerialComm:
                 data_bytes = bytes(data)
                 # Write data
                 bytes_written = self.serial_port.write(data_bytes)
-                time.sleep(1)  # 必须 0.001， Mac上158hz
+                # hex_print(logger, "data_bytes", data_bytes)
+                time.sleep(0.001)  
                 try:
                     self.serial_port.flush()
                 except Exception:
@@ -262,6 +263,7 @@ class SerialComm:
                     break
 
                 candidate = self._rx_buffer[:frame_length]
+                # hex_print(logger, "candidate", candidate)
 
                 # Step 5: Verify frame tail and checksum
                 valid_tail = candidate[-1] == 0xFF

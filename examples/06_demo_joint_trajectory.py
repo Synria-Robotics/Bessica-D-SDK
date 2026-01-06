@@ -1,226 +1,186 @@
-"""
-Demo: Trajectory planning and execution
+#!/usr/bin/env python3
+# Copyright (c) 2025 Synria Robotics Co., Ltd.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+#
+# Author: Synria Robotics Team
+# Website: https://synriarobotics.ai
 
-Copyright (c) 2025 Synria Robotics Co., Ltd.
-Licensed under GPL v3.0
+"""Joint Space Trajectory Planning and Execution (Dual-Arm Support)
 
-Features:
-- Joint space trajectory planning (linear/cubic/quintic)
-- Cartesian space linear trajectory planning
-- Support single arm and dual arm modes
-- Smooth motion with configurable duration and interpolation points
+This demo demonstrates:
+1. Generating smooth joint space trajectories through multiple waypoints
+2. Supporting random waypoint generation or loading from file
+3. Executing the trajectory on the robot (single-arm or dual-arm)
+4. Recording waypoints by manually dragging the robot
 """
+
+import numpy as np
+import argparse
 
 import bessica_d_sdk
-from bessica_d_sdk.utils.logger import logger
-import time
-import numpy as np
+import robocore as rc
+from robocore.utils.beauty_logger import beauty_print
+from robocore.utils.backend import to_numpy
+
+from bessica_d_sdk.execution import JointTrajectoryExecutor
+from bessica_d_sdk.utils.trajectory_utils import (
+    handle_waypoint_recording,
+    load_or_generate_joint_waypoints,
+    display_joint_waypoints,
+    display_joint_trajectory_stats,
+    plot_trajectory
+)
+
 
 def main(args):
-    """Demonstrate trajectory planning and execution.
+    """Main function for joint space trajectory planning and execution."""
+    # [0] Initialize robot connection
+    beauty_print("Joint Space Trajectory Planning (Dual-Arm)", type="module")
     
-    :param args: Command line arguments
-    """
-    # Initialize robot instance
     robot = bessica_d_sdk.create_robot(
         port=args.port,
-        baudrate=args.baudrate,
         robot_version=args.robot_version,
-        debug_mode=False,
         speed_deg_s=args.speed_deg_s,
     )
+    rc.set_backend(args.backend, device=args.device)
+    robot_model = robot.robot_model
+
+    # [1] Handle waypoint recording or loading/generation
+    waypoints, gripper_waypoints = handle_waypoint_recording(robot, args, waypoint_type='joint', arm=args.arm)
+    if waypoints is None:
+        # Check if robot is still connected (if disconnected, user chose to exit)
+        if not robot.servo_driver.serial_comm.is_connected():
+            beauty_print("Exiting program as requested.", type="info")
+            return
+        # Load or generate waypoints
+        try:
+            waypoints, gripper_waypoints = load_or_generate_joint_waypoints(robot, robot_model, args, arm=args.arm)
+        except Exception as e:
+            beauty_print(f"Failed to load/generate waypoints: {e}", type="error")
+            robot.disconnect()
+            return
     
-    try:
-        
-        print("=" * 60)
-        print("轨迹控制演示")
-        print("=" * 60)
-        
-        # 1. 先回到零位
-        print("\n[1] 回到零位...")
-        robot.set_home(arm="both")
-        time.sleep(3)
-        
-        # 2. 单臂关节空间轨迹（cubic插值）
-        print("\n[2] 单臂关节空间轨迹（cubic插值）...")
-        print("   左臂移动到目标关节角度")
-        target_left = [30, 35, 58, -45, -40, -35, 0]  # 度
-        success = robot.move_joint_trajectory(
-            q_end=target_left,
-            arm="left",
-            duration=3.0,
-            method='cubic',
-            num_points=100,
-            joint_format='deg'
-        )
-        if success:
-            print("   ✓ 左臂轨迹执行成功")
-        else:
-            print("   ✗ 左臂轨迹执行失败")
-        time.sleep(2)
-        
-        # 3. 双臂关节空间轨迹（quintic插值）
-        print("\n[3] 双臂关节空间轨迹（quintic插值）...")
-        print("   双臂同步移动到目标关节角度")
-        target_left = [15, 25, 35, 20, 50, 30, 0]  # 度
-        target_right = [15, 25, 35, 20, 50, 30, 0]  # 度
-        success = robot.move_joint_trajectory(
-            q_end=[target_left, target_right],  # 二维数组
-            arm="both",
-            duration=4.0,
-            method='quintic',
-            num_points=150,
-            joint_format='deg'
-        )
-        if success:
-            print("   ✓ 双臂轨迹执行成功")
-        else:
-            print("   ✗ 双臂轨迹执行失败")
-        time.sleep(2)
-        
-        # 4. 单臂关节空间轨迹（linear插值）
-        print("\n[4] 单臂关节空间轨迹（linear插值）...")
-        print("   右臂移动到目标关节角度")
-        target_right = [-20, 30, 45, -30, -50, -25, 0]  # 度
-        success = robot.move_joint_trajectory(
-            q_end=target_right,
-            arm="right",
-            duration=2.5,
-            method='linear',
-            num_points=80,
-            joint_format='deg'
-        )
-        if success:
-            print("   ✓ 右臂轨迹执行成功")
-        else:
-            print("   ✗ 右臂轨迹执行失败")
-        time.sleep(2)
-        
-        # 5. 单臂笛卡尔空间直线轨迹
-        if robot.robot_model is not None:
-            print("\n[5] 单臂笛卡尔空间直线轨迹...")
-            print("   左臂沿直线移动到目标位姿")
-            
-            # 获取当前位姿
-            current_pose = robot.get_pose(arm="left")
-            if current_pose:
-                # 目标位姿：在当前位置基础上，向前移动10cm，保持姿态
-                target_pose = current_pose['output_to_ik'].copy()
-                target_pose[0] += 0.1  # x方向增加10cm
-                
-                success = robot.move_cartesian_linear(
-                    target_pose=target_pose,
-                    arm="left",
-                    duration=3.0,
-                    num_points=100,
-                    ik_method='dls'
-                )
-                if success:
-                    print("   ✓ 左臂笛卡尔轨迹执行成功")
-                else:
-                    print("   ✗ 左臂笛卡尔轨迹执行失败")
-                
-                time.sleep(2)
-                
-                # 回到原位置
-                print("   回到原位置...")
-                success = robot.move_cartesian_linear(
-                    target_pose=current_pose['output_to_ik'],
-                    arm="left",
-                    duration=3.0,
-                    num_points=100,
-                    ik_method='dls'
-                )
-                if success:
-                    print("   ✓ 左臂回到原位置成功")
-                else:
-                    print("   ✗ 左臂回到原位置失败")
-            else:
-                print("   ✗ 无法获取当前位姿，跳过笛卡尔轨迹演示")
-        else:
-            print("\n[5] 跳过笛卡尔空间轨迹演示（robot_model 不可用）")
-        
-        time.sleep(2)
-        
-        # 6. 双臂笛卡尔空间直线轨迹
-        if robot.robot_model is not None:
-            print("\n[6] 双臂笛卡尔空间直线轨迹...")
-            print("   双臂同步沿直线移动到目标位姿")
-            
-            # 获取当前位姿
-            current_pose = robot.get_pose(arm="both")
-            if current_pose:
-                # 左臂目标位姿：向前移动5cm
-                target_pose_left = list(current_pose['output_to_ik'][0])
-                target_pose_left[0] += 0.05  # x方向增加5cm
-                
-                # 右臂目标位姿：向前移动5cm
-                target_pose_right = list(current_pose['output_to_ik'][1])
-                target_pose_right[0] += 0.05  # x方向增加5cm
-                
-                # 方式1：使用二维数组
-                success = robot.move_cartesian_linear(
-                    target_pose=[target_pose_left, target_pose_right],
-                    arm="both",
-                    duration=4.0,
-                    num_points=120,
-                    ik_method='dls'
-                )
-                if success:
-                    print("   ✓ 双臂笛卡尔轨迹执行成功")
-                else:
-                    print("   ✗ 双臂笛卡尔轨迹执行失败")
-                
-                time.sleep(2)
-                
-                # 回到原位置（方式2：使用 target_pose_second_arm 参数）
-                print("   回到原位置...")
-                success = robot.move_cartesian_linear(
-                    target_pose=current_pose['output_to_ik'][0],
-                    target_pose_second_arm=current_pose['output_to_ik'][1],
-                    arm="both",
-                    duration=4.0,
-                    num_points=120,
-                    ik_method='dls'
-                )
-                if success:
-                    print("   ✓ 双臂回到原位置成功")
-                else:
-                    print("   ✗ 双臂回到原位置失败")
-            else:
-                print("   ✗ 无法获取当前位姿，跳过双臂笛卡尔轨迹演示")
-        else:
-            print("\n[6] 跳过双臂笛卡尔空间轨迹演示（robot_model 不可用）")
-        
-        time.sleep(2)
-        
-        # 7. 回到零位
-        print("\n[7] 回到零位...")
-        robot.set_home(arm="both")
-        time.sleep(2)
-        
-        print("\n" + "=" * 60)
-        print("轨迹控制演示完成")
-        print("=" * 60)
-        
-    except KeyboardInterrupt:
-        print("\n✗ 操作被用户中断")
-    except Exception as e:
-        print(f"✗ Error: {e}")
-        import traceback
-        traceback.print_exc()
-    finally:
-        robot.disconnect()
+    display_joint_waypoints(waypoints, gripper_waypoints)
+
+    # [2] Generate trajectory
+    beauty_print("[2] Generating Joint Space Trajectory", type="module", centered=False)
+    
+    planner_name = f"B-Spline (degree={args.bspline_degree})" if args.planner == 'b_spline' else f"Multi-Segment (method={args.segment_method})"
+    beauty_print(f"Using {planner_name} planner")
+
+    trajectory = robot.plan_joint_trajectory(
+        waypoints=waypoints,
+        planner_type=args.planner,
+        duration=args.duration if args.planner == 'b_spline' else None,
+        num_points=args.num_points if args.planner == 'b_spline' else None,
+        bspline_degree=args.bspline_degree,
+        segment_method=args.segment_method,
+        duration_per_segment=args.duration_per_segment if args.planner == 'multi_segment' else None,
+        num_points_per_segment=args.num_points_per_segment if args.planner == 'multi_segment' else None,
+        gripper_waypoints=gripper_waypoints,
+        arm=args.arm
+    )
+
+    display_joint_trajectory_stats(trajectory, arm=args.arm)
+    
+    # Extract gripper trajectory
+    if args.arm == "both":
+        gripper_trajectory = {
+            'left': trajectory.get('gripper_left', None),
+            'right': trajectory.get('gripper_right', None)
+        }
+        joint_angles = {
+            'left': trajectory['q_left'],
+            'right': trajectory['q_right']
+        }
+    else:
+        gripper_trajectory = trajectory.get('gripper', None)
+        joint_angles = trajectory['q']
+
+    # [3] Plot trajectory (optional)
+    if args.plot:
+        beauty_print("[3] Plotting Trajectory", type="module", centered=False)
+        plot_trajectory(trajectory, waypoints, plot_type='joint', arm=args.arm)
+    
+    input("\nPress Enter to start trajectory execution...")
+
+    # [4] Execute trajectory
+    beauty_print("[4] Executing Trajectory on Robot", type="module", centered=False)
+    
+    executor = JointTrajectoryExecutor(
+        robot=robot,
+        speed_deg_s=args.speed_deg_s,
+        tolerance=args.tolerance,
+        timeout=args.timeout,
+        progress_interval=50,
+        initial_delay=1.0,
+        wait_for_completion=True,
+        use_timing=False,
+        arm=args.arm
+    )
+    
+    executor.execute(
+        joint_angles=joint_angles,
+        trajectory_times=to_numpy(trajectory['t']),
+        gripper_values=gripper_trajectory,
+        initial_tolerance=args.initial_tolerance,
+        initial_wait=True
+    )
+
+    robot.disconnect()
+    return {'trajectory': trajectory, 'waypoints': waypoints}
+
 
 if __name__ == '__main__':
-    import argparse
-    parser = argparse.ArgumentParser(description="Trajectory planning and execution demo")
+    parser = argparse.ArgumentParser(description='Joint Space Trajectory Planning and Execution (Dual-Arm)')
     
-    # Robot configuration
+    # Robot connection
     parser.add_argument('--port', type=str, default="", help="串口端口 (例如: /dev/ttyUSB0 或 COM3)")
-    parser.add_argument('--baudrate', type=int, default=1000000,  help="波特率 (默认: 1000000)")
-    parser.add_argument('--robot_version', type=str, default="v1_0",  help="机械臂版本 (默认: v1_0)")
-    parser.add_argument('--speed_deg_s', type=float, default=20.0,  help="运动速度 (度/秒, 默认: 20.0)")
-    args = parser.parse_args()
-    main(args)
-
+    parser.add_argument('--robot_version', type=str, default="v1_1", help="机械臂版本")
+    parser.add_argument('--speed-deg-s', type=int, default=30, help="关节运动速度 (度/秒)")
+    parser.add_argument('--arm', type=str, default='both', choices=['left', 'right', 'both'], 
+                       help="控制的手臂: 'left', 'right', 或 'both' (默认: both)")
+    
+    # Waypoint settings
+    parser.add_argument('--no-record', action='store_true', help='Disable recording mode')
+    parser.add_argument('--save-file', type=str, default=None, help='Path to save recorded waypoints (relative paths will be saved to examples/motion_files/)')
+    parser.add_argument('--waypoints-file', type=str, default=None, help='Path to JSON file with waypoints (relative paths will be loaded from examples/motion_files/)')
+    parser.add_argument('--num-waypoints', type=int, default=6, help='Number of waypoints for random generation')
+    parser.add_argument('--joint-scale', type=float, default=0.6, help='Scale factor for random joints (0.0-1.0)')
+    parser.add_argument('--use-current-joints', action='store_true', help='Use current joints as first waypoint')
+    
+    # Trajectory planning
+    parser.add_argument('--planner', type=str, default='b_spline', choices=['b_spline', 'multi_segment'],
+                        help='Planner type (default: b_spline)')
+    parser.add_argument('--duration', type=float, default=2.0, help='Trajectory duration (B-Spline)')
+    parser.add_argument('--duration-per-segment', type=float, default=1.0, help='Duration per segment (Multi-Segment)')
+    parser.add_argument('--num-points', type=int, default=800, help='Number of points (B-Spline)')
+    parser.add_argument('--num-points-per-segment', type=int, default=100, help='Points per segment (Multi-Segment)')
+    parser.add_argument('--bspline-degree', type=int, default=5, choices=[3, 5], help='B-Spline degree')
+    parser.add_argument('--segment-method', type=str, default='quintic', choices=['cubic', 'quintic'],
+                        help='Multi-segment method')
+    
+    # Execution
+    parser.add_argument('--timeout', type=float, default=10.0, help='Timeout per command (seconds)')
+    parser.add_argument('--tolerance', type=float, default=0.5, help='Joint tolerance in radians for trajectory points (default: 0.5 rad ≈ 28.6 deg)')
+    parser.add_argument('--initial-tolerance', type=float, default=0.5, help='Joint tolerance in radians for initial position (default: 0.1 rad ≈ 5.7 deg). Increase if robot has difficulty reaching starting position.')
+    
+    # Other
+    parser.add_argument('--backend', type=str, default='numpy', choices=['numpy', 'torch'], help='Backend')
+    parser.add_argument('--device', type=str, default='cpu', help='Device')
+    parser.add_argument('--seed', type=int, default=666, help='Random seed')
+    parser.add_argument('--plot', action='store_false', help='Plot trajectory visualization')
+    
+    main(parser.parse_args())

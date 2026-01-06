@@ -32,8 +32,7 @@ SynriaBessicaRobotAPI - User-level API (Bessica)
 """
 
 import time
-from tkinter import FALSE
-from typing import List, Optional, Dict, Union, Tuple
+from typing import List, Optional, Dict, Union, Tuple, Any
 import numpy as np
 import json
 import os
@@ -94,8 +93,6 @@ class SynriaBessicaRobotAPI:
         self.right_model = self.robot_model.right_model
         
         self.speed_deg_s = speed_deg_s
-        # self.hardware_executor = HardwareExecutor(servo_driver)
-        # self.joint_planner = JointPlanner()
         self.home_angles = [0.0] * 7
         if auto_connect:
             self.connect()
@@ -109,6 +106,7 @@ class SynriaBessicaRobotAPI:
         """
         result = self.servo_driver.connect()
         state = self.get_robot_state("joint_gripper")
+        time.sleep(0.001)
         return result
 
     def disconnect(self):
@@ -141,8 +139,7 @@ class SynriaBessicaRobotAPI:
 
         # Joint and gripper are acquired together from hardware using the "joint" command
         if info_type in ("joint_gripper", "joint", "gripper"):
-            if not self.servo_driver.acquire_info("joint_gripper", wait=False, timeout=timeout):
-            # if not self.servo_driver.acquire_info("joint_gripper", wait=True, timeout=timeout):
+            if not self.servo_driver.acquire_info("joint_gripper", wait=True, timeout=timeout):
                 logger.error(f"Failed to get joint/gripper data within timeout period")
                 return None
             return self.data_parser.get_info(info_type)
@@ -417,8 +414,6 @@ class SynriaBessicaRobotAPI:
                 return None
             joints_l = joints_dict.get('left')
             joints_r = joints_dict.get('right')
-            print(f"joints_l: {joints_l}")
-            print(f"joints_r: {joints_r}")
             if not joints_l or not joints_r or not isinstance(joints_l, list) or not isinstance(joints_r, list):
                 logger.error("无法获取关节角度")
                 return None
@@ -728,494 +723,148 @@ class SynriaBessicaRobotAPI:
             tolerance=tolerance_rad
         )
 
-    # ==================== 笛卡尔控制接口（可用 RoboCore 时增强） ====================
-    def move_joint_trajectory(
+    # ==================== 轨迹规划接口 ====================
+    
+    def plan_joint_trajectory(
         self,
-        q_end: Union[List[float], List[List[float]]],
-        arm: Optional[str] = None,
-        duration: float = 2.0,
-        method: str = 'cubic',
-        num_points: int = 100,
-        joint_format: str = 'rad',
-        visualize: bool = False,
-    ) -> bool:
-        """Move robot along joint space trajectory to target.
+        waypoints: Union[np.ndarray, Dict[str, np.ndarray]],
+        planner_type: str = 'b_spline',
+        duration: Optional[float] = None,
+        num_points: int = 800,
+        bspline_degree: int = 5,
+        segment_method: str = 'quintic',
+        duration_per_segment: Optional[float] = None,
+        num_points_per_segment: int = 100,
+        gripper_waypoints: Optional[Union[np.ndarray, Dict[str, np.ndarray]]] = None,
+        arm: str = "both"
+    ) -> Dict[str, Any]:
+        """Plan joint space trajectory through waypoints (supports single-arm and dual-arm).
 
-        :param q_end: Target joint angles. For single arm: List[float] (7 angles). For dual arm: List[List[float]] (2x7 angles)
-        :param arm: Arm to control, "left", "right", or "both" (default: "both")
-        :param duration: Trajectory duration in seconds
-        :param method: Interpolation method, 'linear', 'cubic', or 'quintic'
-        :param num_points: Number of trajectory points
-        :param joint_format: Unit format, 'rad' or 'deg'
-        :param visualize: Enable trajectory visualization (not implemented)
-        :return: True if successful
+        :param waypoints: For single arm: Array [n_waypoints, n_dof] in radians.
+                          For dual arm: Dict with 'left' and 'right' keys, each [n_waypoints, n_dof]
+        :param planner_type: Planner type, 'b_spline' or 'multi_segment'
+        :param duration: Total trajectory duration in seconds (for B-Spline)
+        :param num_points: Number of points in trajectory (for B-Spline)
+        :param bspline_degree: B-Spline degree, 3 (cubic) or 5 (quintic)
+        :param segment_method: Multi-segment method, 'cubic' or 'quintic'
+        :param duration_per_segment: Duration per segment in seconds (for Multi-Segment)
+        :param num_points_per_segment: Number of points per segment (for Multi-Segment)
+        :param gripper_waypoints: For single arm: Optional array [n_waypoints] (0-1000).
+                                  For dual arm: Optional Dict with 'left' and 'right' keys, each [n_waypoints]
+        :param arm: Arm mode, "left", "right", or "both" (default: "both")
+        :return: Dictionary with trajectory data including 't', 'q', 'qd', 'qdd', and optionally 'gripper'
         """
-        arm = arm or "both"
-        
-        # 判断输入格式：一维数组还是二维数组
-        is_dual_arm_input = False
-        if isinstance(q_end, list) and len(q_end) > 0:
-            if isinstance(q_end[0], list):
-                is_dual_arm_input = True
-            elif arm == "both":
-                logger.error("arm='both' 时，q_end 必须是二维数组 [[left_7_joints], [right_7_joints]]")
-                return False
-        
-        # 处理单臂模式
-        if arm in ("left", "right"):
-            if is_dual_arm_input:
-                logger.warning(f"单臂模式但输入了二维数组，使用第一个元素")
-                q_end = q_end[0]
-            
-            # 转换为弧度
-            if joint_format == 'deg':
-                q_end = [a * np.pi / 180.0 for a in q_end]
-            
-            if len(q_end) != 7:
-                logger.error(f"单臂模式需要7个关节角度，但得到 {len(q_end)} 个")
-                return False
-            
-            joints_dict = self.get_robot_state("joint")
-            if not joints_dict or not isinstance(joints_dict, dict):
-                logger.error("无法获取当前关节角度")
-                return False
-            q_start = joints_dict.get(arm)
-            if not q_start or not isinstance(q_start, list) or len(q_start) != 7:
-                logger.error("无法获取当前关节角度")
-                return False
-            
-            try:
-                import numpy as _np
-                from robocore.planning import CubicPolynomialPlanner, QuinticPolynomialPlanner
-                from robocore.utils.backend import to_numpy
+        from robocore.planning import BSplinePlanner, MultiSegmentPlanner
+        from robocore.utils.backend import to_numpy
                 
-                q_start_np = _np.array(q_start)
-                q_end_np = _np.array(q_end)
-                n_joints = len(q_start)
+        is_dual_arm = isinstance(waypoints, dict)
                 
-                if method == 'linear':
-                    # Use cubic planner with zero velocities for linear-like interpolation
-                    planner = CubicPolynomialPlanner()
-                    trajectory = planner.plan(
-                        start=q_start_np, 
-                        end=q_end_np, 
-                        duration=duration, 
-                        num_points=num_points, 
-                        qd_start=_np.zeros(n_joints), 
-                        qd_end=_np.zeros(n_joints)
-                    )
-                elif method == 'cubic':
-                    planner = CubicPolynomialPlanner()
-                    trajectory = planner.plan(start=q_start_np, end=q_end_np, duration=duration, num_points=num_points)
-                elif method == 'quintic':
-                    planner = QuinticPolynomialPlanner()
-                    trajectory = planner.plan(start=q_start_np, end=q_end_np, duration=duration, num_points=num_points)
-                else:
-                    logger.error(f"不支持的插值方法: {method}")
-                    return False
-                
-                # Convert to numpy array (handles both numpy and torch backends)
-                q_traj = to_numpy(trajectory['q'])
-                delay = duration / num_points
-                for q in q_traj.tolist():
-                    if not self.set_robot_state(target_joints=q, arm=arm, joint_format="rad", wait_for_completion=False):
-                        return False
-                    time.sleep(delay)
-                return True
-            except Exception as e:
-                # 退化：简单线性插值
-                logger.warning(f"使用简单线性插值（RoboCore 不可用: {e}）")
-                steps = max(2, int(num_points))
-                delay = duration / steps
-                for s in range(1, steps + 1):
-                    r = s / steps
-                    q = [a + (b - a) * r for a, b in zip(q_start, q_end)]
-                    if not self.set_robot_state(target_joints=q, arm=arm, joint_format="rad", wait_for_completion=False):
-                        return False
-                    time.sleep(delay)
-                return True
-        
-        # 处理双臂模式
-        elif arm == "both":
-            if not is_dual_arm_input:
-                logger.error("arm='both' 时，q_end 必须是二维数组 [[left_7_joints], [right_7_joints]]")
-                return False
+        if is_dual_arm:
+            # Dual-arm mode
+            waypoints_left = to_numpy(waypoints['left'])
+            waypoints_right = to_numpy(waypoints['right'])
             
-            if len(q_end) != 2 or len(q_end[0]) != 7 or len(q_end[1]) != 7:
-                logger.error("双臂模式需要 [[left_7_joints], [right_7_joints]] 格式")
-                return False
+            if waypoints_left.ndim == 1:
+                waypoints_left = waypoints_left.reshape(1, -1)
+            if waypoints_right.ndim == 1:
+                waypoints_right = waypoints_right.reshape(1, -1)
             
-            q_end_left = q_end[0]
-            q_end_right = q_end[1]
+            if len(waypoints_left) < 2 or len(waypoints_right) < 2:
+                raise ValueError("Need at least 2 waypoints for each arm")
             
-            # 转换为弧度
-            if joint_format == 'deg':
-                q_end_left = [a * np.pi / 180.0 for a in q_end_left]
-                q_end_right = [a * np.pi / 180.0 for a in q_end_right]
-            
-            joints_dict = self.get_robot_state("joint")
-            if not joints_dict or not isinstance(joints_dict, dict):
-                logger.error("无法获取当前关节角度（双臂）")
-                return False
-            q_start_left = joints_dict.get('left')
-            q_start_right = joints_dict.get('right')
-            if not q_start_left or not q_start_right or not isinstance(q_start_left, list) or not isinstance(q_start_right, list) or len(q_start_left) != 7 or len(q_start_right) != 7:
-                logger.error("无法获取当前关节角度（双臂）")
-                return False
-            
-            try:
-                import numpy as _np
-                from robocore.planning import CubicPolynomialPlanner, QuinticPolynomialPlanner
-                from robocore.utils.backend import to_numpy
-                
-                # 为左右臂分别生成轨迹
-                q_start_left_np = _np.array(q_start_left)
-                q_end_left_np = _np.array(q_end_left)
-                q_start_right_np = _np.array(q_start_right)
-                q_end_right_np = _np.array(q_end_right)
-                n_joints = 7
-                
-                if method == 'linear':
-                    # Use cubic planner with zero velocities for linear-like interpolation
-                    planner = CubicPolynomialPlanner()
-                    traj_left = planner.plan(
-                        start=q_start_left_np, 
-                        end=q_end_left_np, 
-                        duration=duration, 
-                        num_points=num_points, 
-                        qd_start=_np.zeros(n_joints), 
-                        qd_end=_np.zeros(n_joints)
-                    )
-                    traj_right = planner.plan(
-                        start=q_start_right_np, 
-                        end=q_end_right_np, 
-                        duration=duration, 
-                        num_points=num_points, 
-                        qd_start=_np.zeros(n_joints), 
-                        qd_end=_np.zeros(n_joints)
-                    )
-                elif method == 'cubic':
-                    planner = CubicPolynomialPlanner()
-                    traj_left = planner.plan(start=q_start_left_np, end=q_end_left_np, duration=duration, num_points=num_points)
-                    traj_right = planner.plan(start=q_start_right_np, end=q_end_right_np, duration=duration, num_points=num_points)
-                elif method == 'quintic':
-                    planner = QuinticPolynomialPlanner()
-                    traj_left = planner.plan(start=q_start_left_np, end=q_end_left_np, duration=duration, num_points=num_points)
-                    traj_right = planner.plan(start=q_start_right_np, end=q_end_right_np, duration=duration, num_points=num_points)
-                else:
-                    logger.error(f"不支持的插值方法: {method}")
-                    return False
-                
-                # Convert to numpy arrays (handles both numpy and torch backends)
-                q_traj_left = to_numpy(traj_left['q'])
-                q_traj_right = to_numpy(traj_right['q'])
-                delay = duration / num_points
-                for q_left, q_right in zip(q_traj_left.tolist(), q_traj_right.tolist()):
-                    # 同时发送左右臂指令
-                    success = self.set_robot_state(target_joints=[q_left, q_right], arm="both", joint_format="rad", wait_for_completion=False)
-                    if not success:
-                        return False
-                    time.sleep(delay)
-                return True
-            except Exception as e:
-                # 退化：简单线性插值
-                logger.warning(f"使用简单线性插值（RoboCore 不可用: {e}）")
-                steps = max(2, int(num_points))
-                delay = duration / steps
-                for s in range(1, steps + 1):
-                    r = s / steps
-                    q_left = [a + (b - a) * r for a, b in zip(q_start_left, q_end_left)]
-                    q_right = [a + (b - a) * r for a, b in zip(q_start_right, q_end_right)]
-                    success = self.set_robot_state(target_joints=[q_left, q_right], arm="both", joint_format="rad", wait_for_completion=False)
-                    if not success:
-                        return False
-                    time.sleep(delay)
-                return True
-        else:
-            logger.error(f"非法的 arm 参数: {arm}")
-            return False
-
-    def move_cartesian_linear(
-        self,
-        target_pose: Union[List[float], List[List[float]]],
-        arm: Optional[str] = None,
-        target_pose_second_arm: Optional[List[float]] = None,
-        duration: float = 2.0,
-        num_points: int = 50,
-        ik_method: str = 'dls',
-        visualize: bool = False,
-    ) -> bool:
-        """Move end-effector along linear Cartesian trajectory to target pose.
-
-        Requires robot_model and RoboCore; returns False if unavailable.
-
-        :param target_pose: Target pose as [x, y, z, qx, qy, qz, qw]. For single arm: List[float] (7 elements). For dual arm: List[List[float]] (2x7 elements) or List[float] with target_pose_second_arm
-        :param arm: Arm to control, "left", "right", or "both" (default: "both")
-        :param target_pose_second_arm: Target pose for second arm (required when arm="both" and target_pose is 1D)
-        :param duration: Trajectory duration in seconds
-        :param num_points: Number of trajectory points
-        :param ik_method: IK solver method, 'dls', 'pinv', or 'transpose'
-        :param visualize: Enable trajectory visualization (not implemented)
-        :return: True if successful
-        """
-        if self.robot_model is None:
-            logger.error("未提供 robot_model，无法执行笛卡尔轨迹")
-            return False
-        
-        arm = arm or "both"
-        
-        # 判断输入格式
-        is_dual_arm_input = False
-        if isinstance(target_pose, list) and len(target_pose) > 0:
-            if isinstance(target_pose[0], list):
-                is_dual_arm_input = True
-        
-        try:
-            import numpy as _np
-            from robocore.transform import quaternion_to_matrix as _quat_to_mat, make_transform as _make_tf
-            from robocore.planning.cartesian_space.position import LinearPositionPlanner
-            from robocore.planning.cartesian_space.orientation import SLERPPlanner
-        except Exception as e:
-            logger.error(f"未安装 RoboCore 或导入失败: {e}")
-            return False
-        
-        # 处理单臂模式
-        if arm in ("left", "right"):
-            if is_dual_arm_input:
-                logger.warning(f"单臂模式但输入了二维数组，使用第一个元素")
-                target_pose = target_pose[0]
-            
-            if len(target_pose) != 7:
-                logger.error(f"位姿必须是7个元素 [x, y, z, qx, qy, qz, qw]，但得到 {len(target_pose)} 个")
-                return False
-            
-            current_pose = self.get_pose(arm=arm)
-            if current_pose is None:
-                logger.error("无法获取当前位姿")
-                return False
-            pose_start = current_pose['transform']
-            
-            position = _np.array(target_pose[:3])
-            quaternion = _np.array(target_pose[3:])
-            rotation = _quat_to_mat(quaternion)
-            pose_end = _make_tf(rotation, position)
-            
-            joints_dict = self.get_robot_state("joint")
-            if not joints_dict or not isinstance(joints_dict, dict):
-                logger.error("无法获取当前关节角度作为IK初值")
-                return False
-            q_init = joints_dict.get(arm)
-            if not q_init or not isinstance(q_init, list) or len(q_init) != 7:
-                logger.error("无法获取当前关节角度作为IK初值")
-                return False
-            
-            try:
-                # Generate position and orientation trajectories
-                pos_planner = LinearPositionPlanner()
-                ori_planner = SLERPPlanner()
-                
-                # Extract position and orientation from start and end poses
-                pos_start = pose_start[:3, 3]
-                pos_end = pose_end[:3, 3]
-                rot_start = pose_start[:3, :3]
-                rot_end = pose_end[:3, :3]
-                
-                # Generate position trajectory
-                pos_result = pos_planner.plan(start=pos_start, end=pos_end, duration=duration, num_points=num_points)
-                
-                # Generate orientation trajectory
-                ori_result = ori_planner.plan(start=rot_start, end=rot_end, duration=duration, num_points=num_points)
-                
-                # Combine into full pose trajectory and solve IK
-                q_traj = []
-                q_current = _np.array(q_init)
-                
-                for i in range(num_points):
-                    # Build pose matrix
-                    pos = pos_result['positions'][i]
-                    # Convert quaternion to rotation matrix
-                    from robocore.transform.conversions import quaternion_to_matrix
-                    rot = quaternion_to_matrix(ori_result['orientations'][i])
-                    pose_i = _make_tf(rot, pos)
-                    
-                    # Solve IK for this pose
-                    ik_result = inverse_kinematics(
-                        self.robot_model,
-                        pose_i,
-                        q_current,
-                        backend='numpy',
-                        method=ik_method,
-                        max_iters=200,
-                        pos_tol=1e-3,
-                        ori_tol=1e-3,
-                    )
-                    
-                    if ik_result['success']:
-                        q_traj.append(ik_result['q'])
-                        q_current = _np.array(ik_result['q'])  # Use solution as next initial guess
-                    else:
-                        logger.warning(f"IK failed at point {i}/{num_points}, using previous solution")
-                        q_traj.append(q_current.tolist())
-                
-            except Exception as e:
-                logger.error(f"轨迹规划失败: {e}")
-                return False
-            
-            delay = duration / num_points
-            for q in q_traj:
-                if not self.set_robot_state(target_joints=q, arm=arm, joint_format="rad", wait_for_completion=False):
-                    return False
-                time.sleep(delay)
-            return True
-        
-        # 处理双臂模式
-        elif arm == "both":
-            # 确定左右臂的目标位姿
-            if is_dual_arm_input:
-                if len(target_pose) != 2 or len(target_pose[0]) != 7 or len(target_pose[1]) != 7:
-                    logger.error("双臂模式需要 [[left_7_elements], [right_7_elements]] 格式")
-                    return False
-                target_pose_left = target_pose[0]
-                target_pose_right = target_pose[1]
-            elif target_pose_second_arm is not None:
-                if len(target_pose) != 7 or len(target_pose_second_arm) != 7:
-                    logger.error("双臂模式的位姿必须是7个元素 [x, y, z, qx, qy, qz, qw]")
-                    return False
-                target_pose_left = target_pose
-                target_pose_right = target_pose_second_arm
+            # Create planner
+            if planner_type == 'b_spline':
+                planner = BSplinePlanner(degree=bspline_degree)
+            elif planner_type == 'multi_segment':
+                planner = MultiSegmentPlanner(method=segment_method)
             else:
-                logger.error("双臂模式需要提供两个位姿：使用二维数组或提供 target_pose_second_arm 参数")
-                return False
+                raise ValueError(f"Unknown planner type: {planner_type}. Must be 'b_spline' or 'multi_segment'")
             
-            # 获取当前位姿
-            current_pose = self.get_pose(arm="both")
-            if current_pose is None:
-                logger.error("无法获取当前位姿（双臂）")
-                return False
+            # Plan trajectory for both arms
+            if planner_type == 'b_spline':
+                traj_left = planner.plan(waypoints=waypoints_left, duration=duration, num_points=num_points)
+                traj_right = planner.plan(waypoints=waypoints_right, duration=duration, num_points=num_points)
+            else:  # multi_segment
+                if duration_per_segment is None:
+                    duration_per_segment = 1.0
+                traj_left = planner.plan(waypoints=waypoints_left, durations=duration_per_segment, num_points_per_segment=num_points_per_segment)
+                traj_right = planner.plan(waypoints=waypoints_right, durations=duration_per_segment, num_points_per_segment=num_points_per_segment)
             
-            pose_start_left = current_pose['transform'][0]
-            pose_start_right = current_pose['transform'][1]
+            # Combine trajectories
+            trajectory = {
+                't': to_numpy(traj_left['t']),
+                'q_left': to_numpy(traj_left['q']),
+                'q_right': to_numpy(traj_right['q']),
+                'qd_left': to_numpy(traj_left['qd']),
+                'qd_right': to_numpy(traj_right['qd']),
+                'qdd_left': to_numpy(traj_left['qdd']),
+                'qdd_right': to_numpy(traj_right['qdd']),
+                'waypoints_left': waypoints_left,
+                'waypoints_right': waypoints_right,
+            }
             
-            # 构建目标位姿矩阵
-            position_left = _np.array(target_pose_left[:3])
-            quaternion_left = _np.array(target_pose_left[3:])
-            rotation_left = _quat_to_mat(quaternion_left)
-            pose_end_left = _make_tf(rotation_left, position_left)
-            
-            position_right = _np.array(target_pose_right[:3])
-            quaternion_right = _np.array(target_pose_right[3:])
-            rotation_right = _quat_to_mat(quaternion_right)
-            pose_end_right = _make_tf(rotation_right, position_right)
-            
-            # 获取当前关节角度作为IK初值
-            joints_dict = self.get_robot_state("joint")
-            if not joints_dict or not isinstance(joints_dict, dict):
-                logger.error("无法获取当前关节角度作为IK初值（双臂）")
-                return False
-            q_init_left_raw = joints_dict.get('left')
-            q_init_right_raw = joints_dict.get('right')
-            if not q_init_left_raw or not q_init_right_raw or not isinstance(q_init_left_raw, list) or not isinstance(q_init_right_raw, list) or len(q_init_left_raw) != 7 or len(q_init_right_raw) != 7:
-                logger.error("无法获取当前关节角度作为IK初值（双臂）")
-                return False
-            q_init_left = _np.array(q_init_left_raw)
-            q_init_right = _np.array(q_init_right_raw)
-            
-            try:
-                # Generate position and orientation trajectories for both arms
-                pos_planner = LinearPositionPlanner()
-                ori_planner = SLERPPlanner()
-                
-                # Left arm
-                pos_start_left = pose_start_left[:3, 3]
-                pos_end_left = pose_end_left[:3, 3]
-                rot_start_left = pose_start_left[:3, :3]
-                rot_end_left = pose_end_left[:3, :3]
-                
-                pos_result_left = pos_planner.plan(start=pos_start_left, end=pos_end_left, duration=duration, num_points=num_points)
-                ori_result_left = ori_planner.plan(start=rot_start_left, end=rot_end_left, duration=duration, num_points=num_points)
-                
-                # Right arm
-                pos_start_right = pose_start_right[:3, 3]
-                pos_end_right = pose_end_right[:3, 3]
-                rot_start_right = pose_start_right[:3, :3]
-                rot_end_right = pose_end_right[:3, :3]
-                
-                pos_result_right = pos_planner.plan(start=pos_start_right, end=pos_end_right, duration=duration, num_points=num_points)
-                ori_result_right = ori_planner.plan(start=rot_start_right, end=rot_end_right, duration=duration, num_points=num_points)
-                
-                # Solve IK for both arms
-                q_traj_left = []
-                q_traj_right = []
-                q_current_left = q_init_left.copy()
-                q_current_right = q_init_right.copy()
-                
-                for i in range(num_points):
-                    # Left arm pose
-                    pos_left = pos_result_left['positions'][i]
-                    from robocore.transform.conversions import quaternion_to_matrix
-                    rot_left = quaternion_to_matrix(ori_result_left['orientations'][i])
-                    pose_left = _make_tf(rot_left, pos_left)
+            # Interpolate gripper values if provided
+            if gripper_waypoints is not None:
+                if isinstance(gripper_waypoints, dict):
+                    g_left = to_numpy(gripper_waypoints.get('left'))
+                    g_right = to_numpy(gripper_waypoints.get('right'))
                     
-                    # Right arm pose
-                    pos_right = pos_result_right['positions'][i]
-                    rot_right = quaternion_to_matrix(ori_result_right['orientations'][i])
-                    pose_right = _make_tf(rot_right, pos_right)
-                    
-                    # Solve IK for left arm
-                    ik_result_left = inverse_kinematics(
-                        self.left_model,
-                        pose_left,
-                        q_current_left,
-                        backend='numpy',
-                        method=ik_method,
-                        max_iters=200,
-                        pos_tol=1e-3,
-                        ori_tol=1e-3,
-                    )
-                    
-                    # Solve IK for right arm
-                    ik_result_right = inverse_kinematics(
-                        self.right_model,
-                        pose_right,
-                        q_current_right,
-                        backend='numpy',
-                        method=ik_method,
-                        max_iters=200,
-                        pos_tol=1e-3,
-                        ori_tol=1e-3,
-                    )
-                    
-                    if ik_result_left['success']:
-                        q_traj_left.append(ik_result_left['q'])
-                        q_current_left = _np.array(ik_result_left['q'])
-                    else:
-                        logger.warning(f"Left arm IK failed at point {i}/{num_points}")
-                        q_traj_left.append(q_current_left.tolist())
-                    
-                    if ik_result_right['success']:
-                        q_traj_right.append(ik_result_right['q'])
-                        q_current_right = _np.array(ik_result_right['q'])
-                    else:
-                        logger.warning(f"Right arm IK failed at point {i}/{num_points}")
-                        q_traj_right.append(q_current_right.tolist())
-                
-            except Exception as e:
-                logger.error(f"轨迹规划失败: {e}")
-                return False
-            
-            delay = duration / num_points
-            for q_left, q_right in zip(q_traj_left, q_traj_right):
-                # 同时发送左右臂指令
-                success = self.set_robot_state(target_joints=[q_left, q_right], arm="both", joint_format="rad", wait_for_completion=False)
-                if not success:
-                    return False
-                time.sleep(delay)
-            return True
+                    t_waypoints = np.linspace(0, trajectory['t'][-1], len(g_left))
+                    t_traj = to_numpy(trajectory['t'])
+                    gripper_left = np.interp(t_traj, t_waypoints, g_left)
+                    gripper_right = np.interp(t_traj, t_waypoints, g_right)
+                    gripper_left = np.clip(gripper_left, 0, 1000)
+                    gripper_right = np.clip(gripper_right, 0, 1000)
+                    trajectory['gripper_left'] = gripper_left
+                    trajectory['gripper_right'] = gripper_right
+                else:
+                    raise ValueError("For dual-arm mode, gripper_waypoints must be a dict with 'left' and 'right' keys")
         else:
-            logger.error(f"非法的 arm 参数: {arm}")
-            return False
+            # Single-arm mode
+            waypoints = to_numpy(waypoints)
+            if waypoints.ndim == 1:
+                waypoints = waypoints.reshape(1, -1)
+            
+            if len(waypoints) < 2:
+                raise ValueError("Need at least 2 waypoints")
+            
+            # Create planner
+            if planner_type == 'b_spline':
+                planner = BSplinePlanner(degree=bspline_degree)
+            elif planner_type == 'multi_segment':
+                planner = MultiSegmentPlanner(method=segment_method)
+            else:
+                raise ValueError(f"Unknown planner type: {planner_type}. Must be 'b_spline' or 'multi_segment'")
+            
+            # Plan trajectory
+            if planner_type == 'b_spline':
+                trajectory = planner.plan(waypoints=waypoints, duration=duration, num_points=num_points)
+            else:  # multi_segment
+                if duration_per_segment is None:
+                    duration_per_segment = 1.0
+                trajectory = planner.plan(waypoints=waypoints, durations=duration_per_segment, num_points_per_segment=num_points_per_segment)
+            
+            # Convert to numpy
+            for key in ['t', 'q', 'qd', 'qdd']:
+                if key in trajectory:
+                    trajectory[key] = to_numpy(trajectory[key])
+                
+            # Interpolate gripper values if provided
+            if gripper_waypoints is not None:
+                gripper_waypoints = to_numpy(gripper_waypoints)
+                t_waypoints = np.linspace(0, trajectory['t'][-1], len(gripper_waypoints))
+                t_traj = to_numpy(trajectory['t'])
+                gripper_trajectory = np.interp(t_traj, t_waypoints, gripper_waypoints)
+                gripper_trajectory = np.clip(gripper_trajectory, 0, 1000)
+                trajectory['gripper'] = gripper_trajectory
+            
+            # Add waypoints to trajectory for reference
+            trajectory['waypoints'] = waypoints
+        
+        return trajectory
 
-    # ==================== 辅助方法 ====================
+ 
+
 
     def _wait_for_joint_target(
         self,
@@ -1237,61 +886,82 @@ class SynriaBessicaRobotAPI:
         :param log_prefix: Log message prefix
         :return: True if target reached, False if timeout
         """
+        # If no joint target is specified, there is nothing to wait for.
         if target_joints is None:
             logger.debug("No joint target specified, skip joint waiting.")
             return True
 
         start_time = time.time()
+        check_interval = 0.05  # Check every 50ms
+        last_check_time = 0
 
         while time.time() - start_time < timeout:
-            joints_dict = self.get_robot_state("joint")
-            if joints_dict is None:
-                time.sleep(0.01)
+            current_time = time.time()
+            # Only check state at intervals to avoid excessive polling
+            if current_time - last_check_time < check_interval:
+                time.sleep(0.01)  # Small sleep to avoid busy waiting
                 continue
 
-            if arm == "both":
-                if not isinstance(target_joints, list) or len(target_joints) != 2:
-                    logger.error("Invalid target_joints format for both arms")
-                    return False
-                if not isinstance(joints_dict, dict):
-                    time.sleep(0.01)
-                    continue
-                current_joints_left = joints_dict.get('left')
-                current_joints_right = joints_dict.get('right')
-                if not current_joints_left or not current_joints_right or not isinstance(current_joints_left, list) or not isinstance(current_joints_right, list) or len(current_joints_left) != 7 or len(current_joints_right) != 7:
-                    time.sleep(0.01)
-                    continue
-                
-                # Check both arms
-                left_reached = all(abs(a - b) <= tolerance for a, b in zip(current_joints_left, target_joints[0]))
-                right_reached = all(abs(a - b) <= tolerance for a, b in zip(current_joints_right, target_joints[1]))
-                if left_reached and right_reached:
-                    return True
-            else:
-                if not isinstance(target_joints, list) or len(target_joints) != 7:
-                    logger.error(f"Invalid target_joints format for {arm} arm")
-                    return False
-                if not isinstance(joints_dict, dict):
-                    time.sleep(0.01)
-                    continue
-                current_joints = joints_dict.get(arm)
-                if not current_joints or not isinstance(current_joints, list) or len(current_joints) != 7:
-                    time.sleep(0.01)
-                    continue
-                
-                if all(abs(a - b) <= tolerance for a, b in zip(current_joints, target_joints)):
-                    return True
+            last_check_time = current_time
+            joints_dict = self.get_robot_state("joint")
+            if joints_dict is not None:
+                if arm == "both":
+                    if not isinstance(target_joints, list) or len(target_joints) != 2:
+                        logger.error("Invalid target_joints format for both arms")
+                        return False
+                    if not isinstance(joints_dict, dict):
+                        continue
+                    current_joints_left = joints_dict.get('left')
+                    current_joints_right = joints_dict.get('right')
+                    if current_joints_left is not None and current_joints_right is not None:
+                        if isinstance(current_joints_left, list) and isinstance(current_joints_right, list):
+                            if len(current_joints_left) == 7 and len(current_joints_right) == 7:
+                                # Check both arms - all joints must be within tolerance
+                                left_reached = all(abs(a - b) <= tolerance for a, b in zip(current_joints_left, target_joints[0]))
+                                right_reached = all(abs(a - b) <= tolerance for a, b in zip(current_joints_right, target_joints[1]))
+                                if left_reached and right_reached:
+                                    return True
+                else:
+                    if not isinstance(target_joints, list) or len(target_joints) != 7:
+                        logger.error(f"Invalid target_joints format for {arm} arm")
+                        return False
+                    if not isinstance(joints_dict, dict):
+                        continue
+                    current_joints = joints_dict.get(arm)
+                    if current_joints is not None:
+                        if isinstance(current_joints, list) and len(current_joints) == 7:
+                            if all(abs(a - b) <= tolerance for a, b in zip(current_joints, target_joints)):
+                                return True
             
-            time.sleep(0.01)
-
-        logger.warning(f"{log_prefix}超时")
+        # Timeout - get final state for logging
+        logger.warning("等待关节到目标附近超时")
         joints_dict = self.get_robot_state("joint")
         if arm == "both":
-            current_joints = [joints_dict.get('left', []) if joints_dict else [], joints_dict.get('right', []) if joints_dict else []]
+            if joints_dict is not None and isinstance(joints_dict, dict):
+                current_joints = [joints_dict.get('left', []), joints_dict.get('right', [])]
+                # Calculate and log errors for debugging
+                if len(current_joints) == 2 and len(current_joints[0]) == 7 and len(current_joints[1]) == 7:
+                    left_errors = [abs(a - b) for a, b in zip(current_joints[0], target_joints[0])]
+                    right_errors = [abs(a - b) for a, b in zip(current_joints[1], target_joints[1])]
+                    max_left_error = max(left_errors)
+                    max_right_error = max(right_errors)
+                    logger.warning(f"左臂最大误差: {max_left_error:.4f} rad (tolerance: {tolerance:.4f})")
+                    logger.warning(f"右臂最大误差: {max_right_error:.4f} rad (tolerance: {tolerance:.4f})")
+            else:
+                current_joints = [[], []]
         else:
-            current_joints = joints_dict.get(arm, []) if joints_dict else []
+            if joints_dict is not None and isinstance(joints_dict, dict):
+                current_joints = joints_dict.get(arm, [])
+                # Calculate and log errors for debugging
+                if isinstance(current_joints, list) and len(current_joints) == 7:
+                    errors = [abs(a - b) for a, b in zip(current_joints, target_joints)]
+                    max_error = max(errors)
+                    logger.warning(f"{arm}臂最大误差: {max_error:.4f} rad (tolerance: {tolerance:.4f})")
+            else:
+                current_joints = []
         logger.warning(f"目标关节角度: {target_joints}")
-        logger.warning(f"当前关节角度: {current_joints}")
+        logger.warning(f"关节角度: {current_joints}")
+
         return False
 
     def _generate_random_q(self, scale: float = 0.5) -> List[float]:

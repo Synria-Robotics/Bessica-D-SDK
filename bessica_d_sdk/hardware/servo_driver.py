@@ -231,13 +231,27 @@ class ServoDriver:
     def _update_loop(self):
         """状态更新线程主循环 (支持响应式轮询)"""
         while not self._stop_thread.is_set():
-            time.sleep(self.read_interval)
             try:
+                # Read and process all available frames in one iteration
+                frames_read = 0
+                max_frames_per_iteration = 10  # Limit to prevent blocking too long
 
-                with self._lock:
-                    frame = self.serial_comm.read_frame()
-                if frame and frame != 9999999:
-                    self.data_parser.parse_frame(frame)
+                while frames_read < max_frames_per_iteration and not self._stop_thread.is_set():
+                    with self._lock:
+                        frame = self.serial_comm.read_frame()
+                    
+                    if frame is None:
+                        # No more frames available, break inner loop
+                        break
+                    
+                    if frame != 9999999:
+                        self.data_parser.parse_frame(frame)
+                        frames_read += 1
+                
+                # If we read frames, continue immediately (no sleep) for better responsiveness
+                # Otherwise, sleep to avoid busy waiting
+                if frames_read == 0:
+                    time.sleep(self.read_interval)
             except Exception as e:
                 logger.error(f"状态线程异常：{e}")
                 break
@@ -329,11 +343,32 @@ class ServoDriver:
                     time.sleep(retry_interval)
                     continue
 
+                # Small delay to allow hardware to process the command
+                time.sleep(0.001)  # 1ms delay
+
                 # Wait for response with a short timeout (retry_interval)
                 remaining_time = timeout - (time.time() - start_time)
                 wait_time = min(retry_interval, remaining_time)
 
-                if event.wait(wait_time):
+                # While waiting, actively read frames to improve responsiveness
+                check_interval = 0.01  # Check every 10ms
+                elapsed = 0.0
+                while elapsed < wait_time and not event.is_set():
+                    # Try to read and parse frames while waiting
+                    try:
+                        with self._lock:
+                            frame = self.serial_comm.read_frame()
+                        if frame and frame != 9999999:
+                            self.data_parser.parse_frame(frame)
+                    except Exception:
+                        pass  # Ignore read errors during wait
+                    
+                    if event.wait(min(check_interval, wait_time - elapsed)):
+                        # Successfully received response
+                        return True
+                    elapsed += check_interval
+
+                if event.is_set():
                     # Successfully received response
                     return True
 
@@ -560,9 +595,9 @@ class ServoDriver:
         speed_hw_value = self._deg_s_to_hardware_speed(speed_deg_s)
         # Get current state for optional values
         current_state = self.data_parser.get_joint_state(arm)
-        gripper_speed_hw_value = 1000
-        # gripper_speed_hw_value = 5500
-        # Handle gripper-only case (both arms, no joints)
+        gripper_speed_hw_value = 5500
+        
+        # Gripper-only
         if arm == "both" and joint_angles is None and gripper_value is not None:
             # Gripper-only control: FUNC=0x06, LEN=0x08
             DATA_LENGTH = 0x08
@@ -624,26 +659,23 @@ class ServoDriver:
             
             data_start = 4
             
-            # Get effective joint angles
+            # Get joint angles (user passes [left, right], protocol writes right first, then left)
             if joint_angles is None:
                 if current_state and isinstance(current_state, dict):
                     left_js = current_state.get('left')
                     right_js = current_state.get('right')
-                    effective_joints_left = left_js.angles if left_js and hasattr(left_js, 'angles') and left_js.angles else [0.0] * 7
-                    effective_joints_right = right_js.angles if right_js and hasattr(right_js, 'angles') and right_js.angles else [0.0] * 7
+                    left_angles = left_js.angles if left_js and hasattr(left_js, 'angles') and left_js.angles else [0.0] * 7
+                    right_angles = right_js.angles if right_js and hasattr(right_js, 'angles') and right_js.angles else [0.0] * 7
                 else:
-                    effective_joints_left = [0.0] * 7
-                    effective_joints_right = [0.0] * 7
+                    left_angles = [0.0] * 7
+                    right_angles = [0.0] * 7
             else:
                 if not isinstance(joint_angles, list) or len(joint_angles) != 2:
                     logger.error("Dual arm mode requires joint_angles as List[List[float]] with 2x7 angles")
                     return None
-                effective_joints_left = joint_angles[1]  # Left arm
-                effective_joints_right = joint_angles[0]  # Right arm (protocol: right first)
-            
-
-            right_angles = effective_joints_right 
-            left_angles = effective_joints_left
+                # User passes [left, right], protocol requires right first, then left in frame
+                left_angles = joint_angles[0]
+                right_angles = joint_angles[1]
             # Write right arm joints (7 joints * 4 bytes)
             offset = data_start
             for joint_idx in range(7):

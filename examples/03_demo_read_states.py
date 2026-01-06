@@ -40,7 +40,7 @@ def main(args):
     )
     try:
         
-        robot.print_state(continuous=True, output_format='deg')
+        robot.print_state(continuous=False, output_format='rad')
     except Exception as e:
         print(f"✗ Error: {e}")
         import traceback

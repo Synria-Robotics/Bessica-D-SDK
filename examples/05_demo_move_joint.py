@@ -51,50 +51,71 @@ def main(args):
             return
 
         # Example joint targets in degrees (7 DOF per arm)
-        left_angles_deg = [20, 20, 20, 20, 20, 20, 20]
-        # right_angles_deg = [0, 0, 0, 0, 0, 0, 40]
-        right_angles_deg = [20, 20, 20, 20, 20, 20, 20]
+        # left_angles_deg = [20, 20, 20, 20, 20, 20, 20]
+        # right_angles_deg = [20, 20, 20, 20, 20, 20, 20]
+        left_rad = [1.57, 0.157669903939428124, 0.0, 0.0, 0, 0, 0]
+        # left_rad = [0.29912625363769996, 0.007669903939428124, 0.36662140830466816, 1.714990520856147, 0.35281558121369727, 0.3359417925469552, 0.3390097541227268]
+        right_rad = [-0.004601942363656963, -0.015339807878856249, 0.36048548515312584, 1.2317865726721697, 0.34667965806215495, 0.3405437349106122, 0.34514567727426915]
+
+        # "left": [
+        #   0.29912625363769996,
+        #   0.007669903939428124,
+        #   0.36662140830466816,
+        #   1.714990520856147,
+        #   0.35281558121369727,
+        #   0.3359417925469552,
+        #   0.3390097541227268
+        # ],
+        # "right": [
+        #   -0.004601942363656963,
+        #   -0.015339807878856249,
+        #   0.36048548515312584,
+        #   1.2317865726721697,
+        #   0.34667965806215495,
+        #   0.3405437349106122,
+        #   0.34514567727426915
+        # ],
 
         # Move to home first
-        robot.set_home(arm="both")
-        time.sleep(1)
+        # robot.set_home(arm="both")
+        # time.sleep(1)
 
         # --- Single-arm control examples ---
         # Move right arm only
-        robot.set_robot_state(
-            target_joints=right_angles_deg,
-            arm="right",
-            joint_format="deg",
-            speed_deg_s=args.speed_deg_s,
-            wait_for_completion=True,
-        )
-        time.sleep(1)
+        # robot.set_robot_state(
+        #     target_joints=right_angles_deg,
+        #     arm="right",
+        #     joint_format="deg",
+        #     speed_deg_s=args.speed_deg_s,
+        #     wait_for_completion=True,
+        # )
+        # time.sleep(1)
 
-        # Move left arm only
-        robot.set_robot_state(
-            target_joints=left_angles_deg,
-            arm="left",
-            joint_format="deg",
-            speed_deg_s=args.speed_deg_s,
-            wait_for_completion=False,
-        )
-        time.sleep(0.1)
+        # # Move left arm only
+        # robot.set_robot_state(
+        #     target_joints=left_angles_deg,
+        #     arm="left",
+        #     joint_format="deg",
+        #     speed_deg_s=args.speed_deg_s,
+        #     wait_for_completion=False,
+        # )
+        # time.sleep(0.1)
 
-        robot.set_home(arm="both")
-        time.sleep(1)
+        # robot.set_home(arm="both")
+        # time.sleep(1)
         # --- Dual-arm control example ---
         # Both arms move simultaneously; list-of-two-lists for arm="both"
-        both_angles_deg = [left_angles_deg, right_angles_deg]
+        both_angles_deg = [left_rad, right_rad]
         robot.set_robot_state(
             target_joints=both_angles_deg,
             arm="both",
-            joint_format="deg",
+            joint_format="rad",
             speed_deg_s=args.speed_deg_s,
             wait_for_completion=False,
         )
         time.sleep(1)
-        robot.set_home(arm="both")
-        time.sleep(0.1)
+        # robot.set_home(arm="both")
+        # time.sleep(0.1)
     except Exception as e:
         print(f"✗ Error: {e}")
         import traceback

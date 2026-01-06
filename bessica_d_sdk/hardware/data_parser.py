@@ -263,7 +263,7 @@ class DataParser:
         if len(frame) < 4 + frame[3] + 2:
             logger.warning(f"Version frame too short: expect ≥{4 + frame[3] + 2}, got {len(frame)}")
             return None
-
+        hex_print(logger, "frame", frame)
         data_len = frame[3]
         data_start = 4
         data_end = data_start + data_len
@@ -294,7 +294,6 @@ class DataParser:
 
         # Parse serial number as ASCII string
         serial_number = _bytes_to_ascii(serial_bytes)
-
         # Parse hardware and firmware versions as little-endian decimal values
         hardware_decimal = _bytes_to_decimal(hardware_bytes)
         firmware_decimal = _bytes_to_decimal(firmware_bytes)
@@ -302,7 +301,6 @@ class DataParser:
         # Convert decimal values to version strings
         hardware_str = self._decimal_to_version_string(hardware_decimal)
         firmware_str = self._decimal_to_version_string(firmware_decimal)
-
         # Store firmware version (for upper-level API)
         with self._lock:
             self._firmware_version = firmware_str
