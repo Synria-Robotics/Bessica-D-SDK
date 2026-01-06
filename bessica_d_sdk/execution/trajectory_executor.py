@@ -145,10 +145,10 @@ class _BaseTrajectoryExecutor:
         # Move to first point with wait (if requested)
         if initial_wait:
             beauty_print("Moving to starting position...")
-        if is_dual_arm:
-            first_gripper = [int(g_left[0]) if g_left is not None else None,
-                           int(g_right[0]) if g_right is not None else None]
-            success = self.robot.set_robot_state(
+            if is_dual_arm:
+                first_gripper = [int(g_left[0]) if g_left is not None else None,
+                               int(g_right[0]) if g_right is not None else None]
+                success = self.robot.set_robot_state(
                 target_joints=[q_left[0].tolist(), q_right[0].tolist()],
                 gripper_value=first_gripper,
                 arm="both",

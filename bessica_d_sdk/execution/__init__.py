@@ -16,16 +16,20 @@
 # Author: Synria Robotics Team
 # Website: https://synriarobotics.ai
 
-"""Trajectory Executor for Dual-Arm Robot Control
+"""Trajectory Executor and Drag Teaching for Dual-Arm Robot Control
 
 This module provides specialized executors for joint space and Cartesian space trajectories
-for dual-arm robots (Bessica).
+and drag teaching functionality for dual-arm robots (Bessica).
 """
 
 from .trajectory_executor import JointTrajectoryExecutor, CartesianTrajectoryExecutor
+from .drag_teaching import SimpleDragTeaching, list_available_motions, print_available_motions
 
 __all__ = [
     'JointTrajectoryExecutor',
     'CartesianTrajectoryExecutor',
+    'SimpleDragTeaching',
+    'list_available_motions',
+    'print_available_motions',
 ]
 

@@ -151,8 +151,6 @@ class SynriaBessicaRobotAPI:
         result = self.data_parser.get_info(info_type)
         return result
 
-
-
     # ==================== 关节控制 ====================
     def set_home(self, arm: str = "both", speed_deg_s: float = 20.0) -> bool:
         """Move robot to home position.
