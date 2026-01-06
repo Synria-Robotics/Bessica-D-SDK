@@ -29,8 +29,8 @@ topic:
     Format: {"joint_positions": [float] * 14}
 
 The joint ordering is:
-- First 7 values:  left joints  (as returned by `get_joints("left")`)
-- Next 7 values:   right joints (as returned by `get_joints("right")`)
+- First 7 values:  left joints  (as returned by `get_robot_state("joint")['left']`)
+- Next 7 values:   right joints (as returned by `get_robot_state("joint")['right']`)
 
 This matches the real‑robot 14‑DOF interface used by `BessicaRobotDDS`.
 """
@@ -118,11 +118,11 @@ def main(args):
 
             left_cmd = joints_cmd[:7]
             right_cmd = joints_cmd[7:]
-            success = robot.set_joint_target(
+            success = robot.set_robot_state(
                 target_joints=[left_cmd, right_cmd],
                 arm="both",
                 joint_format="rad",  # commands are expected in radians
-                wait=False,
+                wait_for_completion=False,
                 tolerance=0.1,
             )
             if not success:
@@ -140,9 +140,15 @@ def main(args):
         logger.info("Press 'q' then Enter to exit, or Ctrl+C.")
 
         while True:
-            # Read both arms' joints; API returns radians
-            joints_left = robot.get_joints(arm="left")
-            joints_right = robot.get_joints(arm="right")
+            # Read both arms' joints via unified state API; API returns radians
+            joints_dict = robot.get_robot_state("joint")
+            if joints_dict is None or not isinstance(joints_dict, dict):
+                logger.warning("[DDS Demo 13] Failed to read joint angles dict")
+                time.sleep(dt)
+                continue
+
+            joints_left = joints_dict.get("left")
+            joints_right = joints_dict.get("right")
 
             if (
                 not isinstance(joints_left, list)

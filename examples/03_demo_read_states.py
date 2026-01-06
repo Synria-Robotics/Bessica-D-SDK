@@ -39,8 +39,13 @@ def main(args):
         robot_version=args.robot_version
     )
     try:
+        # Print robot state once
+        if args.once:
+            robot.print_state(continuous=False, output_format=args.format)
+        else:
+            # Print robot state continuously with specified FPS
+            robot.print_state(continuous=True, output_format=args.format, fps=args.fps)
         
-        robot.print_state(continuous=False, output_format='rad')
     except Exception as e:
         print(f"✗ Error: {e}")
         import traceback
@@ -56,6 +61,9 @@ if __name__ == '__main__':
     parser.add_argument('--port', type=str, default="", help="串口端口 (例如: /dev/ttyACM0 或 COM3)")
     parser.add_argument('--robot_version', type=str, default="v1_1",  help="机械臂版本 (默认: v1_0)")
     parser.add_argument('--arm', type=str, default="both", choices=["left", "right", "both"], help="机械臂 (默认: both)")
+    parser.add_argument('--fps', type=float, default=100.0, help="Target frames per second for continuous mode (default: 100 Hz)")
+    parser.add_argument('--once', action='store_true', help="Print state once (default: continuous print)")
+    parser.add_argument('--format', type=str, default='rad', choices=['rad', 'deg'], help="Angle display format: rad(radians) or deg(degrees)")
     args = parser.parse_args()
 
     main(args)

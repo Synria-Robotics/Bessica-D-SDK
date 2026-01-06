@@ -17,8 +17,18 @@
 # Website: https://synriarobotics.ai
 
 
-"""Bimanual Inverse Kinematics Demo
+"""Bimanual Inverse Kinematics 3D Movement Demo
+
+Move the end-effector(s) through 6 target poses around the current target pose:
+    - ±0.10 m in X (front / back)
+    - ±0.10 m in Y (left / right)
+    - ±0.10 m in Z (up / down)
+
+This yields 6 target poses (front, back, left, right, up, down),
+each held for about 1 second when executed.
 """
+
+import time
 
 import bessica_d_sdk
 from bessica_d_sdk.utils.logger import logger
@@ -27,30 +37,19 @@ import robocore as rc
 from robocore.utils.beauty_logger import beauty_print_array, beauty_print
 
 
-
-
-def main(args):
-    """Demonstrate forward kinematics for single arm or bimanual system.
-
-    :param args: Command line arguments
-    """
-    robot = bessica_d_sdk.create_robot(
-        port=args.port,
-        robot_version=args.robot_version,
-        debug_mode=False,
-        variant=args.variant,
-        left_base_link=args.left_base_link,
-        left_end_link=args.left_end_link,
-        right_base_link=args.right_base_link,
-        right_end_link=args.right_end_link,
-    )
-    rc.set_backend(args.backend)
+def ik_solve(args, robot, target_left=None, target_right=None):
+    """Solve IK for given target pose(s) and optionally execute motion."""
+    # Fallback to CLI targets if per-call targets are not provided
+    if target_left is None:
+        target_left = args.target_left
+    if target_right is None and args.arm == "both":
+        target_right = args.target_right
 
     # Solve IK based on arm selection
     if args.arm == "both":
         ik_result = robot.set_pose_target(
-            target_pose1=args.target_left,
-            target_pose2=args.target_right,
+            target_pose1=target_left,
+            target_pose2=target_right,
             arm="both",
             speed_deg_s=args.speed_deg_s,
             execute=args.execute
@@ -81,13 +80,22 @@ def main(args):
             print(f"  {beauty_print_array(ik_result.get('q_left', []))}")
             beauty_print("右臂关节角度 (弧度):")
             print(f"  {beauty_print_array(ik_result.get('q_right', []))}")
-
+            if ik_result.get('motion_executed', False):
+                beauty_print("✓ 机械臂已移动到目标位置")
+            else:
+                beauty_print("(未执行移动)")
         else:
             print(f"  错误信息: {ik_result.get('message', '未知错误')}")
         print("=" * 60 + "\n")
     else:
+        # Single arm: use left or right target only
+        if args.arm == "left":
+            single_target = target_left or args.target_left
+        else:
+            single_target = target_right or args.target_right
+
         ik_result = robot.set_pose_target(
-            target_pose1=args.target_left,
+            target_pose1=single_target,
             arm=args.arm,
             speed_deg_s=args.speed_deg_s,
             execute=args.execute
@@ -111,10 +119,74 @@ def main(args):
 
 
 
+def main(args):
+    """Demonstrate inverse kinematics around a square of target poses.
+
+    :param args: Command line arguments
+    """
+    robot = bessica_d_sdk.create_robot(
+        port=args.port,
+        robot_version=args.robot_version,
+        debug_mode=False,
+        variant=args.variant,
+        left_base_link=args.left_base_link,
+        left_end_link=args.left_end_link,
+        right_base_link=args.right_base_link,
+        right_end_link=args.right_end_link,
+    )
+    rc.set_backend(args.backend)
+
+    # Base target poses from arguments (position [0:3], quaternion [3:7])
+    base_left = np.array(args.target_left, dtype=float)
+    base_right = np.array(args.target_right, dtype=float)
+
+    # Offsets (m) along X, Y, Z axes around the base target
+    # 6 targets: front, back, left, right, up, down
+    delta = 0.10  # 10 cm
+    offsets_xyz = [
+        np.array([+delta, 0.0, 0.0]),  # front (+X)
+        np.array([-delta, 0.0, 0.0]),  # back (-X)
+        np.array([0.0, +delta, 0.0]),  # left (+Y)
+        np.array([0.0, -delta, 0.0]),  # right (-Y)
+        np.array([0.0, 0.0, +delta]),  # up (+Z)
+        np.array([0.0, 0.0, -delta]),  # down (-Z)
+    ]
+    
+    direction_names = ["front (+X)", "back (-X)", "left (+Y)", "right (-Y)", "up (+Z)", "down (-Z)"]
+
+    beauty_print("Starting IK 3D movement demo around target pose", type="module")
+
+    for i, (offset, direction) in enumerate(zip(offsets_xyz, direction_names), start=1):
+        beauty_print(f"Target {i}/6: {direction}, offset = {offset.tolist()} m")
+
+        # Build new target poses by offsetting position only (keep orientation)
+        if args.arm == "both":
+            tl = base_left.copy()
+            tr = base_right.copy()
+            tl[:3] += offset
+            tr[:3] += offset
+
+            ik_solve(args, robot, tl.tolist(), tr.tolist())
+        else:
+            # Single arm: offset chosen arm only
+            if args.arm == "left":
+                tl = base_left.copy()
+                tl[:3] += offset
+                ik_solve(args, robot, tl.tolist(), None)
+            elif args.arm == "right":
+                tr = base_right.copy()
+                tr[:3] += offset
+                ik_solve(args, robot, None, tr.tolist())
+
+        # Hold each pose for about 1 second if motion is executed
+        if args.execute:
+            time.sleep(2.0)
+
+
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Forward kinematics demo")
+    parser = argparse.ArgumentParser(description="Inverse kinematics square demo")
     
     # Robot configuration
     parser.add_argument('--port', type=str, default="", help="串口端口 (例如: /dev/ttyUSB0 或 COM3)")

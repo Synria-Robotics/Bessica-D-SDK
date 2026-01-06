@@ -132,23 +132,29 @@ class RealRobotDDSBridge:
     def _read_robot_state(self) -> Optional[Dict[str, Any]]:
         """Read current robot state from hardware."""
         try:
-            # Read joint positions (in radians)
-            joint_positions = self.robot.get_joints(arm="both")
-            if joint_positions is None:
+            # Read joint positions (in radians) using unified state API
+            joints_dict = self.robot.get_robot_state("joint")
+            if joints_dict is None or not isinstance(joints_dict, dict):
+                logger.warning("[RealRobotDDSBridge] Failed to get joint state dict")
                 return None
             
-            # Convert to list format: [left_7_joints, right_7_joints] -> [14 joints]
-            if isinstance(joint_positions, list) and len(joint_positions) == 2:
-                # Dual arm: [[left_7], [right_7]]
-                left_angles = joint_positions[0]
-                right_angles = joint_positions[1]
-                joint_positions_flat = list(left_angles) + list(right_angles)
-            elif isinstance(joint_positions, list) and len(joint_positions) == 14:
-                # Already flat format
-                joint_positions_flat = joint_positions
-            else:
-                logger.warning(f"[RealRobotDDSBridge] Unexpected joint format: {type(joint_positions)}")
+            left_angles = joints_dict.get("left")
+            right_angles = joints_dict.get("right")
+            if (
+                not isinstance(left_angles, list)
+                or not isinstance(right_angles, list)
+                or len(left_angles) != 7
+                or len(right_angles) != 7
+            ):
+                logger.warning(
+                    "[RealRobotDDSBridge] Unexpected joint format: left=%s, right=%s",
+                    left_angles,
+                    right_angles,
+                )
                 return None
+            
+            # Flatten to 14-DOF list [left_7, right_7]
+            joint_positions_flat = list(left_angles) + list(right_angles)
             
             # Read joint velocities (not available from hardware, use zeros)
             joint_velocities = [0.0] * 14
@@ -165,23 +171,25 @@ class RealRobotDDSBridge:
                 
                 if left_pose and right_pose:
                     # Extract position and quaternion from pose dict
-                    # pose format: {'position': [x,y,z], 'orientation': {'x': qx, 'y': qy, 'z': qz, 'w': qw}}
+                    # New pose format (Bessica): 
+                    #   {'position': np.array(3), 'quaternion_xyzw': np.array(4)}
                     left_pos = left_pose.get('position', [0.0, 0.0, 0.0])
-                    left_quat = left_pose.get('orientation', {})
+                    left_quat_xyzw = left_pose.get('quaternion_xyzw', [0.0, 0.0, 0.0, 1.0])
+                    # Convert [x, y, z, w] -> [w, x, y, z] for VR interface
                     left_quat_list = [
-                        left_quat.get('w', 1.0),
-                        left_quat.get('x', 0.0),
-                        left_quat.get('y', 0.0),
-                        left_quat.get('z', 0.0)
+                        float(left_quat_xyzw[3]),
+                        float(left_quat_xyzw[0]),
+                        float(left_quat_xyzw[1]),
+                        float(left_quat_xyzw[2]),
                     ]
                     
                     right_pos = right_pose.get('position', [0.0, 0.0, 0.0])
-                    right_quat = right_pose.get('orientation', {})
+                    right_quat_xyzw = right_pose.get('quaternion_xyzw', [0.0, 0.0, 0.0, 1.0])
                     right_quat_list = [
-                        right_quat.get('w', 1.0),
-                        right_quat.get('x', 0.0),
-                        right_quat.get('y', 0.0),
-                        right_quat.get('z', 0.0)
+                        float(right_quat_xyzw[3]),
+                        float(right_quat_xyzw[0]),
+                        float(right_quat_xyzw[1]),
+                        float(right_quat_xyzw[2]),
                     ]
                     
                     # Build pose_data: [head_pos(3), head_quat(4), right_gripper_pos(3), right_gripper_quat(4), left_gripper_pos(3), left_gripper_quat(4)]
@@ -220,12 +228,12 @@ class RealRobotDDSBridge:
                     right_angles_rad = joint_positions_cmd[7:14]
                     
                     # Apply command to robot (non-blocking, no wait)
-                    success = self.robot.set_joint_target(
+                    success = self.robot.set_robot_state(
                         target_joints=[left_angles_rad, right_angles_rad],
                         arm="both",
                         joint_format="rad",
-                        wait=False,  # Don't wait for completion to maintain control frequency
-                        tolerance=0.1
+                        wait_for_completion=False,  # Don't wait for completion to maintain control frequency
+                        tolerance=0.1,
                     )
                     
                     if success:

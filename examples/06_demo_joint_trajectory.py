@@ -105,7 +105,7 @@ def main(args):
             'left': trajectory['q_left'],
             'right': trajectory['q_right']
         }
-    else:
+                else:
         gripper_trajectory = trajectory.get('gripper', None)
         joint_angles = trajectory['q']
 
@@ -115,7 +115,7 @@ def main(args):
         plot_trajectory(trajectory, waypoints, plot_type='joint', arm=args.arm)
     
     input("\nPress Enter to start trajectory execution...")
-
+        
     # [4] Execute trajectory
     beauty_print("[4] Executing Trajectory on Robot", type="module", centered=False)
     

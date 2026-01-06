@@ -382,10 +382,6 @@ class ServoDriver:
 
 
     
-    
-
-
-
     def set_joint_and_gripper(
         self,
         joint_angles: Optional[Union[List[float], List[List[float]]]] = None,

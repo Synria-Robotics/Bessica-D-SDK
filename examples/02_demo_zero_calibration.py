@@ -44,7 +44,7 @@ if __name__ == '__main__':
     
     # Robot configuration
     parser.add_argument('--port', type=str, default="", help="Serial port (e.g., /dev/ttyACM0 or COM3)")
-    parser.add_argument('--arm', type=str, default='both', choices=['both', 'left', 'right'],
+    parser.add_argument('--arm', type=str, default='right', choices=['both', 'left', 'right'],
                        help="Arm to control: 'both', 'left', or 'right' (default: both)")
     args = parser.parse_args()
 

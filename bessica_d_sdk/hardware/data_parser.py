@@ -263,7 +263,6 @@ class DataParser:
         if len(frame) < 4 + frame[3] + 2:
             logger.warning(f"Version frame too short: expect ≥{4 + frame[3] + 2}, got {len(frame)}")
             return None
-        hex_print(logger, "frame", frame)
         data_len = frame[3]
         data_start = 4
         data_end = data_start + data_len

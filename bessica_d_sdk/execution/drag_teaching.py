@@ -25,6 +25,7 @@ from datetime import datetime
 import numpy as np
 
 from bessica_d_sdk.utils.trajectory_utils import record_waypoints_manual
+from bessica_d_sdk.utils.fps_utils import precise_sleep
 
 
 class SimpleDragTeaching:
@@ -77,12 +78,16 @@ class SimpleDragTeaching:
         def record_loop():
             """后台记录线程"""
             sample_hz = getattr(self.args, "sample_hz", 50.0)
-            dt = 1.0 / sample_hz
-            start_time = time.time()
+            interval = 1.0 / sample_hz
+            # For high frequency (>= 100 Hz), use smaller spin_threshold for better efficiency
+            # For lower frequencies, use larger spin_threshold to reduce CPU usage
+            spin_threshold = 0.002 if interval <= 0.010 else 0.010  # 2ms for high freq, 10ms for low freq
+            start_time = time.perf_counter()
 
             while recording.is_set():
+                loop_start = time.perf_counter()
                 try:
-                    current_time = time.time() - start_time
+                    current_time = loop_start - start_time
                     # Get joint and gripper together in a single call (more efficient)
                     state = self.controller.get_robot_state("joint_gripper")
                     
@@ -115,7 +120,9 @@ class SimpleDragTeaching:
                 except Exception as e:
                     print(f"[警告] 记录失败: {e}")
 
-                time.sleep(dt)
+                # Use precise_sleep for accurate timing
+                dt_time = time.perf_counter() - loop_start
+                precise_sleep(interval - dt_time, spin_threshold=spin_threshold)
 
         try:
             input("开始拖动，按回车开始记录...")

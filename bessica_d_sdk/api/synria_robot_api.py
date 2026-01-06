@@ -48,6 +48,7 @@ from synriard import get_model_path
 from bessica_d_sdk.hardware.data_parser import JointState
 
 from ..utils.logger import logger
+from ..utils.fps_utils import precise_sleep
 from ..hardware import ServoDriver
 
 class SynriaBessicaRobotAPI:
@@ -216,7 +217,6 @@ class SynriaBessicaRobotAPI:
         :return: True if successful, False otherwise
         """
         arm = arm or "both"
-        
         # Validate and convert joint format
         is_deg = joint_format.lower() in ("deg", "degree", "degrees")
         is_rad = joint_format.lower() in ("rad", "radian", "radians")
@@ -286,6 +286,7 @@ class SynriaBessicaRobotAPI:
                         target_pose2: Optional[List[float]] = None,
                         arm: Optional[str] = None,
                         method: str = 'dls',
+                        speed_deg_s: float = 5.0,
                         tolerance: float = 1e-3,
                         max_iters: int = 100,
                         execute: bool = True) -> Dict:
@@ -339,13 +340,13 @@ class SynriaBessicaRobotAPI:
                 pos_tol=tolerance,
                 ori_tol=tolerance,
             )
-            
+            # ik_result['res_left']['q'][3] = -ik_result['res_left']['q'][3]
             result = ik_result['res_left'] if arm == "left" else ik_result['res_right']
             
             # Execute motion if requested
             if execute and result.get('success', False):
                 print(f"result: {result}")
-                self.set_robot_state(target_joints=result['q'], arm=arm, joint_format="rad", wait_for_completion=False)
+                self.set_robot_state(target_joints=result['q'], arm=arm, joint_format="rad", wait_for_completion=False, speed_deg_s=speed_deg_s)
             
             return result
         
@@ -374,7 +375,8 @@ class SynriaBessicaRobotAPI:
             
             # Execute motion if requested
             if execute and ik_result.get('success_left', False) and ik_result.get('success_right', False):
-                self.set_robot_state(target_joints=[ik_result['q_left'], ik_result['q_right']], arm="both", wait_for_completion=False)
+                # ik_result['q_left'][3] = -ik_result['q_left'][3]
+                self.set_robot_state(target_joints=[ik_result['q_left'], ik_result['q_right']], arm="both", wait_for_completion=False, speed_deg_s=speed_deg_s)
             
             return {
                 'success': ik_result.get('success_left', False) and ik_result.get('success_right', False),
@@ -467,12 +469,13 @@ class SynriaBessicaRobotAPI:
                 'output_to_ik': [pos[0], pos[1], pos[2], quat[0], quat[1], quat[2], quat[3]],
             }
 
-    def print_state(self, arm: Optional[str] = None, continuous: bool = False, output_format: str = "rad"):
+    def print_state(self, arm: Optional[str] = None, continuous: bool = False, output_format: str = "rad", fps: float = 200.0):
         """Print current robot state.
 
         :param arm: Arm to query, "left", "right", or "both" (default: "both")
         :param continuous: Print continuously if True, once if False
         :param output_format: Angle format, 'deg' or 'rad' (default: 'rad')
+        :param fps: Target frames per second for continuous mode. Default 200 Hz
         """
         arm = arm or "both"
         
@@ -619,11 +622,17 @@ class SynriaBessicaRobotAPI:
                 logger.warning("无法获取夹爪状态")
         
         if continuous:
-            logger.info("开始连续状态打印，按 Ctrl+C 停止")
+            # For high frequency (>= 100 Hz), use smaller spin_threshold for better efficiency
+            # For 200 Hz (5ms interval), use 2ms spin_threshold to allow some sleep time
+            interval = 1 / fps
+            spin_threshold = 0.002 if interval <= 0.010 else 0.010  # 2ms for high freq, 10ms for low freq
+            logger.info(f"开始连续状态打印，按 Ctrl+C 停止 (目标FPS: {fps})")
             try:
                 while True:
+                    start_time = time.perf_counter()
                     _print_once(arm)
-                    time.sleep(0.3)
+                    dt_time = time.perf_counter() - start_time
+                    precise_sleep(interval - dt_time, spin_threshold=spin_threshold)
             except KeyboardInterrupt:
                 logger.info("停止连续状态打印")
         else:

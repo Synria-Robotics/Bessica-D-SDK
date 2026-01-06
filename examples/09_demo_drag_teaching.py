@@ -79,7 +79,7 @@ def main(args):
 
     drag_teaching = SimpleDragTeaching(args, robot, arm=args.arm)
     drag_teaching.run()
-    
+
     robot.disconnect()
 
 
