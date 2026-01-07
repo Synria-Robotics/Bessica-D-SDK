@@ -34,17 +34,13 @@ from robocore.utils.backend import to_numpy
 from robocore.transform import make_transform, quaternion_to_matrix, rpy_to_matrix, matrix_to_quaternion
 
 
-def _get_motion_file_dir() -> str:
+def get_motion_file_dir() -> str:
     """Get the motion_file directory path relative to examples folder.
     
     :return: Absolute path to motion_files directory
     """
     # Get the directory where this file is located
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    # Go up to bessica_d_sdk, then to Bessica-D-SDK, then to examples/motion_files
-    # Structure: Bessica-D-SDK/bessica_d_sdk/utils/trajectory_utils.py
-    # Target: Bessica-D-SDK/examples/motion_files
-    # current_dir = .../Bessica-D-SDK/bessica_d_sdk/utils
     utils_dir = current_dir  # .../Bessica-D-SDK/bessica_d_sdk/utils
     sdk_dir = os.path.dirname(utils_dir)  # .../Bessica-D-SDK/bessica_d_sdk
     sdk_root = os.path.dirname(sdk_dir)  # .../Bessica-D-SDK
@@ -68,7 +64,7 @@ def _resolve_waypoints_path(file_path: str, create_dir: bool = False) -> str:
     # If relative path, check if it's just a filename
     if os.path.dirname(file_path) == "":
         # Just a filename, put it in motion_file folder
-        motion_file_dir = _get_motion_file_dir()
+        motion_file_dir = get_motion_file_dir()
         if create_dir:
             os.makedirs(motion_file_dir, exist_ok=True)
         return os.path.join(motion_file_dir, file_path)

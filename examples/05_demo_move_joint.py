@@ -63,12 +63,15 @@ def main(args):
         if args.arm == "both":
             # Dual-arm: provide list of two lists
             target_joints = [target_angles_deg, target_angles_deg]
+            gripper_value = [1000, 1000]
         else:
             # Single-arm: provide single list
             target_joints = target_angles_deg
+            gripper_value = 0
 
         robot.set_robot_state(
             target_joints=target_joints,
+            gripper_value=gripper_value,
             arm=args.arm,
             joint_format="deg",
             speed_deg_s=args.speed_deg_s,
@@ -77,9 +80,9 @@ def main(args):
         time.sleep(1)
 
         # Return to home
-        print(f"Returning {args.arm} arm(s) to home position...")
-        robot.set_home(arm=args.arm, speed_deg_s=args.speed_deg_s)
-        time.sleep(0.5)
+        # print(f"Returning {args.arm} arm(s) to home position...")
+        # robot.set_home(arm=args.arm, speed_deg_s=args.speed_deg_s)
+        # time.sleep(0.5)
 
     except KeyboardInterrupt:
         print("\n✗ Processing interrupted")

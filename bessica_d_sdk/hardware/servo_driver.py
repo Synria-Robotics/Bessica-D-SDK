@@ -645,7 +645,6 @@ class ServoDriver:
             # 0x40 = 64 bytes = 右臂7关节*4 + 左臂7关节*4 + 左夹爪*4 + 右夹爪*4
             DATA_LENGTH = 0x40
             FRAME_SIZE = 1 + 1 + 1 + 1 + DATA_LENGTH + 1 + 1  # header + cmd + func + len + data + checksum + footer
-            
             frame = [0] * FRAME_SIZE
             frame[0] = self.FRAME_HEADER  # 0xAA
             frame[1] = self.CMD_DUAL_ARM  # 0x06
@@ -714,19 +713,27 @@ class ServoDriver:
             left_gripper = max(0, min(1000, int(left_gripper)))
             right_gripper = max(0, min(1000, int(right_gripper)))
             
+            # Protocol order: 右臂7关节 + 左臂7关节 + 右夹爪 + 左夹爪
+            # Write right gripper first (4 bytes: 2 bytes value + 2 bytes speed)
+            right_gripper_start = offset
+            frame[offset] = right_gripper & 0xFF
+            frame[offset + 1] = (right_gripper >> 8) & 0xFF
+            frame[offset + 2] = gripper_speed_hw_value & 0xFF
+            frame[offset + 3] = (gripper_speed_hw_value >> 8) & 0xFF
+            offset += 4
+            
             # Write left gripper (4 bytes: 2 bytes value + 2 bytes speed)
+            left_gripper_start = offset
             frame[offset] = left_gripper & 0xFF
             frame[offset + 1] = (left_gripper >> 8) & 0xFF
             frame[offset + 2] = gripper_speed_hw_value & 0xFF
             frame[offset + 3] = (gripper_speed_hw_value >> 8) & 0xFF
             offset += 4
             
-            # Write right gripper (4 bytes: 2 bytes value + 2 bytes speed)
-            frame[offset] = right_gripper & 0xFF
-            frame[offset + 1] = (right_gripper >> 8) & 0xFF
-            frame[offset + 2] = gripper_speed_hw_value & 0xFF
-            frame[offset + 3] = (gripper_speed_hw_value >> 8) & 0xFF
-            
+            # Debug: verify gripper bytes were written correctly
+            # hex_print(logger, "right gripper", frame[right_gripper_start:right_gripper_start+4])
+            # hex_print(logger, "left gripper", frame[left_gripper_start:left_gripper_start+4])
+            # hex_print(logger, "frame", frame)
         elif arm in ("left", "right"):
             # Single arm mode: 0x20 (32 bytes) = 7 joints * 4 + 1 gripper * 4
             DATA_LENGTH = 0x20
@@ -757,13 +764,10 @@ class ServoDriver:
                     return None
                 effective_joints = joint_angles
             
-            # Apply direction mapping
-            mapped_angles = effective_joints
-            
             # Write joints (7 joints * 4 bytes = 28 bytes)
             offset = data_start
             for joint_idx in range(7):
-                angle_rad = mapped_angles[joint_idx]
+                angle_rad = effective_joints[joint_idx]
                 hw_value = self._rad_to_hardware_value(angle_rad)
                 frame[offset] = hw_value & 0xFF
                 frame[offset + 1] = (hw_value >> 8) & 0xFF
@@ -792,10 +796,11 @@ class ServoDriver:
             effective_gripper = max(0, min(1000, int(effective_gripper)))
             
             # Write gripper (4 bytes: 2 bytes value + 2 bytes speed)
+            # Use gripper_speed_hw_value for gripper, not joint speed
             frame[offset] = effective_gripper & 0xFF
             frame[offset + 1] = (effective_gripper >> 8) & 0xFF
-            frame[offset + 2] = speed_hw_value & 0xFF
-            frame[offset + 3] = (speed_hw_value >> 8) & 0xFF
+            frame[offset + 2] = gripper_speed_hw_value & 0xFF
+            frame[offset + 3] = (gripper_speed_hw_value >> 8) & 0xFF
             # Total: 7 joints * 4 + 1 gripper * 4 = 28 + 4 = 32 bytes (0x20)
         else:
             logger.error(f"Invalid arm parameter: {arm}")

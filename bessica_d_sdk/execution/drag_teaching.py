@@ -24,7 +24,7 @@ from typing import List, Dict, Any, Optional, Union
 from datetime import datetime
 import numpy as np
 
-from bessica_d_sdk.utils.trajectory_utils import record_waypoints_manual
+from bessica_d_sdk.utils.trajectory_utils import record_waypoints_manual, get_motion_file_dir
 from bessica_d_sdk.utils.fps_utils import precise_sleep
 
 
@@ -155,7 +155,8 @@ class SimpleDragTeaching:
             return None
 
         # 加载数据
-        save_dir = os.path.join("example_motions", self.args.save_motion)
+        motion_files_dir = get_motion_file_dir()
+        save_dir = os.path.join(motion_files_dir, self.args.save_motion)
         traj_path = os.path.join(save_dir, "joint_traj.json")
         meta_path = os.path.join(save_dir, "meta.json")
 
@@ -224,7 +225,8 @@ class SimpleDragTeaching:
             return None
 
         # 创建保存目录
-        save_dir = os.path.join("example_motions", self.args.save_motion)
+        motion_files_dir = get_motion_file_dir()
+        save_dir = os.path.join(motion_files_dir, self.args.save_motion)
         os.makedirs(save_dir, exist_ok=True)
 
         # 保存关节轨迹
@@ -345,24 +347,19 @@ class SimpleDragTeaching:
         print("[回放] 移动到起始点（速度30）...")
         try:
             if self.arm == "both":
-                if "q_left" in first_point and "q_right" in first_point:
-                    first_gripper = [
-                        first_point.get("grip_left", 0.0),
-                        first_point.get("grip_right", 0.0)
-                    ]
-                    self.controller.set_robot_state(
-                        target_joints=[first_point["q_left"], first_point["q_right"]],
-                        gripper_value=first_gripper,
-                        arm="both",
-                        joint_format='rad',
-                        speed_deg_s=30,
-                        wait_for_completion=True,
-                    )
-                else:
-                    print("[错误] 轨迹数据格式不匹配（需要双臂数据）")
-                    return
+                # Extract gripper values - always convert to int
+                first_gripper = [int(first_point["grip_left"]), int(first_point["grip_right"])]
+                self.controller.set_robot_state(
+                    target_joints=[first_point["q_left"], first_point["q_right"]],
+                    gripper_value=first_gripper,
+                    arm="both",
+                    joint_format='rad',
+                    speed_deg_s=30,
+                    wait_for_completion=True,
+                )
             else:
-                first_gripper = first_point.get("grip", 0.0)
+                # Extract gripper value - always convert to int
+                first_gripper = int(first_point["grip"])
                 self.controller.set_robot_state(
                     target_joints=first_point["q"],
                     gripper_value=first_gripper,
@@ -396,10 +393,8 @@ class SimpleDragTeaching:
                     motion_time = _sleep_based_on_velocity(point, prev_joints if i > 0 else None)
 
                     if self.arm == "both":
-                        gripper_val = [
-                            point.get("grip_left", 0.0),
-                            point.get("grip_right", 0.0)
-                        ]
+                        # Extract gripper values - always convert to int
+                        gripper_val = [int(point["grip_left"]), int(point["grip_right"])]
                         self.controller.set_robot_state(
                             target_joints=[point["q_left"], point["q_right"]],
                             gripper_value=gripper_val,
@@ -414,7 +409,8 @@ class SimpleDragTeaching:
                             "q_right": point["q_right"]
                         }
                     else:
-                        gripper_value = point.get("grip", 0.0)
+                        # Extract gripper value - always convert to int
+                        gripper_value = int(point["grip"])
                         self.controller.set_robot_state(
                             target_joints=point["q"],
                             gripper_value=gripper_value,
@@ -441,10 +437,8 @@ class SimpleDragTeaching:
                     start_time = time.time()
                     
                     if self.arm == "both":
-                        gripper_val = [
-                            int(point.get("grip_left", 0.0)) if point.get("grip_left") is not None else None,
-                            int(point.get("grip_right", 0.0)) if point.get("grip_right") is not None else None
-                        ]
+                        # Extract gripper values - always convert to int
+                        gripper_val = [int(point["grip_left"]), int(point["grip_right"])]
                         try:
                             self.controller.set_robot_state(
                                 target_joints=[point["q_left"], point["q_right"]],
@@ -461,7 +455,8 @@ class SimpleDragTeaching:
                             "q_right": point["q_right"]
                         }
                     else:
-                        gripper_value = int(point.get("grip", 0.0)) if point.get("grip") is not None else None
+                        # Extract gripper value - always convert to int
+                        gripper_value = int(point["grip"])
                         try:
                             self.controller.set_robot_state(
                                 target_joints=point["q"],
@@ -502,7 +497,8 @@ class SimpleDragTeaching:
                     return
 
                 # 检查动作是否存在
-                save_dir = os.path.join("example_motions", self.args.save_motion)
+                motion_files_dir = get_motion_file_dir()
+                save_dir = os.path.join(motion_files_dir, self.args.save_motion)
                 if not os.path.exists(save_dir):
                     print(f"[错误] 动作 '{self.args.save_motion}' 不存在")
                     print("\n提示:")
@@ -560,7 +556,7 @@ class SimpleDragTeaching:
 
 def list_available_motions() -> List[str]:
     """列出所有可用的动作"""
-    motions_dir = "example_motions"
+    motions_dir = get_motion_file_dir()
     if not os.path.exists(motions_dir):
         return []
 
@@ -586,10 +582,11 @@ def print_available_motions():
         print("请先使用 auto 或 manual 模式录制动作")
         return
 
-    print(f"在 example_motions/ 目录下找到 {len(motions)} 个动作:")
+    motion_files_dir = get_motion_file_dir()
+    print(f"在 {motion_files_dir} 目录下找到 {len(motions)} 个动作:")
 
     for i, motion in enumerate(motions, 1):
-        motion_dir = os.path.join("example_motions", motion)
+        motion_dir = os.path.join(motion_files_dir, motion)
         meta_path = os.path.join(motion_dir, "meta.json")
 
         # 读取动作信息

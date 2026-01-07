@@ -220,7 +220,6 @@ class SynriaBessicaRobotAPI:
         # Validate and convert joint format
         is_deg = joint_format.lower() in ("deg", "degree", "degrees")
         is_rad = joint_format.lower() in ("rad", "radian", "radians")
-        
         if not (is_deg or is_rad):
             logger.error(f"set_robot_state: joint_format 必须是 'deg' 或 'rad'，当前: {joint_format}")
             return False
