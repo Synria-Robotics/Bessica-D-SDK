@@ -17,13 +17,21 @@ Features:
 - Reads robot state and publishes it back
 """
 
-import bessica_d_sdk
-from bessica_d_sdk.utils.logger import logger
+import os
+import sys
 import time
 import json
 import threading
 import numpy as np
 from typing import Optional, Dict, Any
+
+# Ensure project root (containing `synria_common_sdk`) is on sys.path
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+import bessica_d_sdk
+from bessica_d_sdk.utils.logger import logger
 
 from synria_common_sdk.remote_communication.channel import ChannelFactoryInitialize, ChannelPublisher, ChannelSubscriber
 from synria_common_sdk.idl.std_msgs.msg.dds_._String_ import String_
@@ -64,9 +72,9 @@ class RealRobotDDSBridge:
         logger.info("[RealRobotDDSBridge] Initialized")
     
     def _command_callback(self, msg: String_):
-        """Callback for receiving DDS commands."""
+        """Callback for receiving DDS commands from VR teleoperation."""
         try:
-            if not hasattr(msg, "data"):
+            if not hasattr(msg, "data") or not msg.data:
                 return
             
             cmd_data = json.loads(msg.data)
@@ -75,8 +83,18 @@ class RealRobotDDSBridge:
                 self.latest_cmd = cmd_data
                 self.cmd_received = True
             
-            logger.debug(f"[RealRobotDDSBridge] Received command: {list(cmd_data.keys())}")
+            # Log command reception (debug level to avoid spam)
+            if "joint_positions_cmd" in cmd_data:
+                logger.debug(
+                    f"[RealRobotDDSBridge] Received joint command: "
+                    f"{len(cmd_data['joint_positions_cmd'])} joints"
+                )
+            else:
+                logger.debug(f"[RealRobotDDSBridge] Received command: {list(cmd_data.keys())}")
             
+        except json.JSONDecodeError as e:
+            logger.error(f"[RealRobotDDSBridge] Failed to parse command JSON: {e}")
+            logger.error(f"[RealRobotDDSBridge] Raw message: {msg.data if hasattr(msg, 'data') else 'N/A'}")
         except Exception as e:
             logger.error(f"[RealRobotDDSBridge] Error processing command: {e}")
             import traceback
@@ -219,29 +237,133 @@ class RealRobotDDSBridge:
         """Apply command to real robot."""
         try:
             # Extract joint position command
-            if "joint_positions_cmd" in cmd_data:
-                joint_positions_cmd = cmd_data["joint_positions_cmd"]
-                
+            # Command format supports:
+            #   - {"joint_positions_cmd": [14 floats], "arm": "both"}  # Both arms
+            #   - {"joint_positions_cmd": [7 floats], "arm": "left"}   # Left arm only
+            #   - {"joint_positions_cmd": [7 floats], "arm": "right"}  # Right arm only
+            #   - {"joint_positions_cmd": [14 floats]}  # Legacy: both arms (default)
+            
+            if "joint_positions_cmd" not in cmd_data:
+                logger.debug(f"[RealRobotDDSBridge] Command keys: {list(cmd_data.keys())}")
+                return
+            
+            joint_positions_cmd = cmd_data["joint_positions_cmd"]
+            arm = cmd_data.get("arm", "both")  # Default to "both" for backward compatibility
+            
+            if not isinstance(joint_positions_cmd, list):
+                logger.warning(
+                    f"[RealRobotDDSBridge] Invalid joint command type: expected list, "
+                    f"got {type(joint_positions_cmd)}"
+                )
+                return
+            
+            # Extract gripper command if present
+            gripper_value = cmd_data.get("gripper_value", None)
+            
+            # Validate and apply based on arm selection
+            if arm == "both":
+                # Both arms: expect 14 joints [left_7, right_7]
                 if len(joint_positions_cmd) == 14:
-                    # Split into left and right arms
                     left_angles_rad = joint_positions_cmd[:7]
                     right_angles_rad = joint_positions_cmd[7:14]
                     
-                    # Apply command to robot (non-blocking, no wait)
+                    # Handle gripper values: can be [left, right] list or single value for both
+                    gripper_left = None
+                    gripper_right = None
+                    if gripper_value is not None:
+                        if isinstance(gripper_value, list) and len(gripper_value) == 2:
+                            gripper_left = gripper_value[0]
+                            gripper_right = gripper_value[1]
+                        elif isinstance(gripper_value, (int, float)):
+                            # Single value applies to both grippers
+                            gripper_left = gripper_value
+                            gripper_right = gripper_value
+                    
                     success = self.robot.set_robot_state(
                         target_joints=[left_angles_rad, right_angles_rad],
+                        gripper_value=[gripper_left, gripper_right] if gripper_left is not None else None,
                         arm="both",
                         joint_format="rad",
-                        wait_for_completion=False,  # Don't wait for completion to maintain control frequency
+                        wait_for_completion=False,
                         tolerance=0.1,
                     )
                     
                     if success:
-                        logger.debug("[RealRobotDDSBridge] Applied joint command")
+                        logger.debug("[RealRobotDDSBridge] Applied joint command (both arms)")
                     else:
-                        logger.warning("[RealRobotDDSBridge] Failed to apply joint command")
+                        logger.warning("[RealRobotDDSBridge] Failed to apply joint command (both arms)")
                 else:
-                    logger.warning(f"[RealRobotDDSBridge] Invalid joint command length: {len(joint_positions_cmd)}")
+                    logger.warning(
+                        f"[RealRobotDDSBridge] Invalid joint command length for 'both': "
+                        f"expected 14, got {len(joint_positions_cmd)}"
+                    )
+                    
+            elif arm == "left":
+                # Left arm only: expect 7 joints
+                if len(joint_positions_cmd) == 7:
+                    # Handle gripper value: can be single value or [left, right] list
+                    gripper_left = None
+                    if gripper_value is not None:
+                        if isinstance(gripper_value, list) and len(gripper_value) >= 1:
+                            gripper_left = gripper_value[0]
+                        elif isinstance(gripper_value, (int, float)):
+                            gripper_left = gripper_value
+                    
+                    success = self.robot.set_robot_state(
+                        target_joints=joint_positions_cmd,
+                        gripper_value=gripper_left,
+                        arm="left",
+                        joint_format="rad",
+                        wait_for_completion=False,
+                        tolerance=0.1,
+                    )
+                    
+                    if success:
+                        logger.debug("[RealRobotDDSBridge] Applied joint command (left arm)")
+                    else:
+                        logger.warning("[RealRobotDDSBridge] Failed to apply joint command (left arm)")
+                else:
+                    logger.warning(
+                        f"[RealRobotDDSBridge] Invalid joint command length for 'left': "
+                        f"expected 7, got {len(joint_positions_cmd)}"
+                    )
+                    
+            elif arm == "right":
+                # Right arm only: expect 7 joints
+                if len(joint_positions_cmd) == 7:
+                    # Handle gripper value: can be single value or [left, right] list
+                    gripper_right = None
+                    if gripper_value is not None:
+                        if isinstance(gripper_value, list) and len(gripper_value) >= 2:
+                            gripper_right = gripper_value[1]
+                        elif isinstance(gripper_value, list) and len(gripper_value) == 1:
+                            gripper_right = gripper_value[0]
+                        elif isinstance(gripper_value, (int, float)):
+                            gripper_right = gripper_value
+                    
+                    success = self.robot.set_robot_state(
+                        target_joints=joint_positions_cmd,
+                        gripper_value=gripper_right,
+                        arm="right",
+                        joint_format="rad",
+                        wait_for_completion=False,
+                        tolerance=0.1,
+                    )
+                    
+                    if success:
+                        logger.debug("[RealRobotDDSBridge] Applied joint command (right arm)")
+                    else:
+                        logger.warning("[RealRobotDDSBridge] Failed to apply joint command (right arm)")
+                else:
+                    logger.warning(
+                        f"[RealRobotDDSBridge] Invalid joint command length for 'right': "
+                        f"expected 7, got {len(joint_positions_cmd)}"
+                    )
+            else:
+                logger.warning(
+                    f"[RealRobotDDSBridge] Invalid arm selection: '{arm}'. "
+                    f"Expected 'left', 'right', or 'both'"
+                )
             
             # Handle other command types if needed (torques, etc.)
             if "joint_torques_cmd" in cmd_data:
@@ -271,7 +393,11 @@ class RealRobotDDSBridge:
     def run(self):
         """Main control loop - processes commands and publishes state."""
         logger.info("[RealRobotDDSBridge] Entering main control loop...")
+        logger.info("Waiting for VR teleoperation commands...")
         logger.info("Press Ctrl+C to stop")
+        
+        cmd_count = 0
+        last_log_time = time.time()
         
         try:
             while self.running:
@@ -280,11 +406,23 @@ class RealRobotDDSBridge:
                     if self.cmd_received and self.latest_cmd is not None:
                         cmd_to_apply = self.latest_cmd.copy()
                         self.cmd_received = False
+                        cmd_count += 1
                     else:
                         cmd_to_apply = None
                 
                 if cmd_to_apply:
                     self._apply_command(cmd_to_apply)
+                
+                # Log command rate periodically
+                current_time = time.time()
+                if current_time - last_log_time >= 5.0:  # Every 5 seconds
+                    if cmd_count > 0:
+                        rate = cmd_count / (current_time - last_log_time + 5.0)
+                        logger.info(f"[RealRobotDDSBridge] Command rate: {rate:.1f} Hz ({cmd_count} commands)")
+                    else:
+                        logger.info("[RealRobotDDSBridge] Waiting for commands...")
+                    cmd_count = 0
+                    last_log_time = current_time
                 
                 # Small sleep to prevent busy waiting
                 time.sleep(0.001)
@@ -317,9 +455,7 @@ def main(args):
     # Initialize robot
     robot = bessica_d_sdk.create_robot(
         port=args.port,
-        baudrate=args.baudrate,
         robot_version=args.robot_version,
-        debug_mode=args.debug,
         speed_deg_s=args.speed_deg_s
     )
     
@@ -362,11 +498,8 @@ if __name__ == '__main__':
     
     # Robot configuration
     parser.add_argument('--port', type=str, default="", help="Serial port (e.g., /dev/ttyUSB0 or COM3)")
-    parser.add_argument('--baudrate', type=int, default=1000000, help="Baud rate (default: 1000000)")
-    parser.add_argument('--robot_version', type=str, default="v1_0", help="Robot version (default: v1_0)")
-    parser.add_argument('--speed_deg_s', type=float, default=40.0, help="Motion speed (deg/s, default: 40.0)")
-    parser.add_argument('--debug', action='store_true', help="Enable debug mode")
-    
+    parser.add_argument('--robot_version', type=str, default="v1_1", help="Robot version (default: v1_1)")
+    parser.add_argument('--speed_deg_s', type=float, default=40.0, help="Motion speed (deg/s, default: 40.0)")    
     # DDS configuration
     parser.add_argument('--publish_rate', type=float, default=100.0, help="State publishing rate in Hz (default: 100.0)")
     

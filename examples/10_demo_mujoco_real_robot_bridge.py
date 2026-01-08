@@ -24,16 +24,19 @@ Features:
 - 交互拖动双臂（MuJoCo）
 - 按设定频率同步关节角到真实机器人
 - 使用 Bessica-D SDK 的 SynriaBessicaRobotAPI 下发指令
+- 使用 RoboCore 的 InteractiveDualArmIK 进行 MuJoCo 交互控制
 
 Usage examples:
-python examples/11_demo_mujoco_real_robot_bridge.py --port COM1
+python examples/10_demo_mujoco_real_robot_bridge.py --port /dev/ttyUSB0
+python examples/10_demo_mujoco_real_robot_bridge.py --port COM3 --mode relative --send_interval 1.5
 """
 
 import time
 from typing import Optional
 
 import numpy as np
-from bessica_d_sdk import create_mujoco_controller
+from robocore.bridge.sim.mujoco.interactive_dual_arm import InteractiveDualArmIK
+from synriard import get_model_path
 import bessica_d_sdk
 from bessica_d_sdk.utils.logger import logger
 
@@ -85,15 +88,16 @@ class RealRobotBridge:
             return
         
         # 转换为度（Bessica SDK 使用度制）
-        q_left_deg = np.degrees(q_right_rad).tolist()
-        q_right_deg = np.degrees(q_left_rad).tolist()
+        q_left_deg = np.degrees(q_left_rad).tolist()
+        q_right_deg = np.degrees(q_right_rad).tolist()
 
         # 下发到真实机器人（双臂）
         try:
-            ok = self.robot.set_joint_target(
+            ok = self.robot.set_robot_state(
                 target_joints=[q_left_deg, q_right_deg], 
                 arm="both",
-                joint_format="deg"
+                joint_format="deg",
+                wait_for_completion=False
             )
             if not ok:
                 logger.debug("下发关节角失败（本次跳过）")
@@ -144,9 +148,13 @@ def main():
     print("  MuJoCo 拖动 → 真实机器人实时同步")
     print("="*60)
     
-    # 1) 创建 MuJoCo 交互控制器（使用 SDK 提供的工厂函数）
+    # 1) 创建 MuJoCo 交互控制器（使用 RoboCore 的 InteractiveDualArmIK）
     logger.info("创建 MuJoCo 交互控制器…")
-    controller = create_mujoco_controller(robot_version=args.robot_version)
+    mjcf_path = get_model_path("Bessica_D", version=args.robot_version, variant="skeleton_interactive", model_format="mjcf")
+    left_end = "left_arm_link7"
+    right_end = "right_arm_link7"
+    controller = InteractiveDualArmIK(mjcf_path, left_end, right_end)
+    logger.info("[OK] MuJoCo 交互控制器创建成功")
 
     # 2) 创建并连接真实机器人（必需）
     logger.info("初始化真实机器人接口…")

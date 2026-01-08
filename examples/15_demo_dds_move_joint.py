@@ -1,22 +1,30 @@
 """
-Demo 15: Send joint commands via DDS (14‑DOF) to control the robot
+Demo 15: Test DDS joint commands for real robot
 
-This demo mirrors the behavior of `05_demo_move_joint.py`, but instead of
-controlling the robot directly via the SDK, it publishes joint commands over
-DDS. A separate bridge (e.g. `13_demo_dds_connection.py`) listens to the
-command topic and applies the motion on the real robot.
+Simple test script to send joint position commands via DDS to test the real robot bridge
+(e.g. `12_demo_vr_teleoperation.py`).
 
-DDS command interface (real‑robot / 14‑DOF):
+DDS command interface:
 
     Topic:  rt/bessica_d/cmd
     Type:   String_ (JSON payload)
     Format: {
-        "joint_positions_cmd": [float] * 14   # radians
+        "joint_positions_cmd": [float] * 7 or [float] * 14,  # radians
+        "arm": "left" | "right" | "both"  # which arm(s) to control
     }
 
-Joint ordering:
-- First 7 values:  left joints
-- Next 7 values:   right joints
+Usage:
+    # Test both arms (14 joints, all to 20 degrees)
+    python 15_demo_dds_move_joint.py --arm both --angle_deg 20.0
+
+    # Test left arm only (7 joints)
+    python 15_demo_dds_move_joint.py --arm left --angle_deg 20.0
+
+    # Test right arm only (7 joints)
+    python 15_demo_dds_move_joint.py --arm right --angle_deg 20.0
+
+    # Test with real robot bridge (channel 0)
+    python 15_demo_dds_move_joint.py --domain_id 0 --arm both --angle_deg 15.0
 """
 
 import argparse
@@ -38,19 +46,15 @@ from synria_common_sdk.remote_communication.channel import (
 from synria_common_sdk.idl.std_msgs.msg.dds_._String_ import String_
 
 
-def build_joint_command(deg: float) -> list:
-    """Build a simple symmetric 14‑DOF joint command from a single degree value."""
-    rad = deg * math.pi / 180.0
-    left = [rad] * 7
-    right = [rad] * 7
-    return left + right
-
-
 def main(args):
     """
-    Publish one or more joint position commands over DDS to move the robot.
+    Publish joint position commands over DDS to test the real robot bridge.
     """
-    print(f"[DDS Demo 15] Initializing DDS factory (domain_id={args.domain_id})...")
+    print("=" * 70)
+    print("Demo 15: DDS Joint Command Test")
+    print("=" * 70)
+    
+    print(f"\n[DDS Demo 15] Initializing DDS factory (domain_id={args.domain_id})...")
     ChannelFactoryInitialize(args.domain_id)
 
     print("[DDS Demo 15] Creating command publisher on rt/bessica_d/cmd ...")
@@ -58,36 +62,73 @@ def main(args):
     pub.Init()
     print("[DDS Demo 15] Command publisher initialized.")
 
-    # Build joint command (radians) based on requested degree value
-    joint_positions_cmd = build_joint_command(args.angle_deg)
-    msg_dict = {"joint_positions_cmd": joint_positions_cmd}
+    # Convert angle from degrees to radians
+    angle_rad = args.angle_deg * math.pi / 180.0
+    
+    # Build joint command based on arm selection
+    if args.arm == "both":
+        # Both arms: 14 joints (7 left + 7 right)
+        joint_positions_cmd = [angle_rad] * 14
+        print(f"[DDS Demo 15] Command: both arms, 14 joints, {args.angle_deg}° ({angle_rad:.4f} rad)")
+    elif args.arm == "left":
+        # Left arm only: 7 joints
+        joint_positions_cmd = [angle_rad] * 7
+        print(f"[DDS Demo 15] Command: left arm, 7 joints, {args.angle_deg}° ({angle_rad:.4f} rad)")
+    elif args.arm == "right":
+        # Right arm only: 7 joints
+        joint_positions_cmd = [angle_rad] * 7
+        print(f"[DDS Demo 15] Command: right arm, 7 joints, {args.angle_deg}° ({angle_rad:.4f} rad)")
+    else:
+        print(f"[DDS Demo 15] Error: Invalid arm selection: {args.arm}")
+        return
+
+    # Build DDS message
+    msg_dict = {
+        "joint_positions_cmd": joint_positions_cmd,
+        "arm": args.arm
+    }
     msg = String_(data=json.dumps(msg_dict))
 
-    print(
-        f"[DDS Demo 15] Sending joint command: angle_deg={args.angle_deg} "
-        f"({len(joint_positions_cmd)} joints, radians)"
-    )
+    print(f"\n[DDS Demo 15] Sending command...")
+    print(f"  Arm: {args.arm}")
+    print(f"  Joints: {len(joint_positions_cmd)}")
+    print(f"  Angle: {args.angle_deg}° ({angle_rad:.4f} rad)")
+    
+    # Send command
     pub.Write(msg)
+    print(f"[DDS Demo 15] ✓ Command sent")
 
     # Optionally send the command multiple times to ensure it is received
-    for i in range(1, args.repeat):
-        time.sleep(args.interval)
-        pub.Write(msg)
-        print(f"[DDS Demo 15] Resent joint command ({i + 1}/{args.repeat})")
+    if args.repeat > 1:
+        print(f"\n[DDS Demo 15] Resending command {args.repeat - 1} more time(s)...")
+        for i in range(1, args.repeat):
+            time.sleep(args.interval)
+            pub.Write(msg)
+            print(f"[DDS Demo 15] Resent command ({i + 1}/{args.repeat})")
 
+    print("\n" + "=" * 70)
     print("[DDS Demo 15] Done.")
+    print("=" * 70)
+    print("\n💡 Make sure 12_demo_vr_teleoperation.py is running to receive commands!")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Demo 15: Publish joint position commands via DDS (rt/bessica_d/cmd)"
+        description="Demo 15: Test DDS joint position commands (rt/bessica_d/cmd)"
     )
 
     parser.add_argument(
         "--domain_id",
         type=int,
-        default=1,
-        help="DDS domain ID (must match bridge, default: 1)",
+        default=0,
+        help="DDS domain ID (0 for real robot, 1 for simulation, default: 0)",
+    )
+    parser.add_argument(
+        "--arm",
+        type=str,
+        choices=["left", "right", "both"],
+        default="both",
+        help="Arm to control: left, right, or both (default: both)",
     )
     parser.add_argument(
         "--angle_deg",
@@ -110,5 +151,3 @@ if __name__ == "__main__":
 
     cmd_args = parser.parse_args()
     main(cmd_args)
-
-
