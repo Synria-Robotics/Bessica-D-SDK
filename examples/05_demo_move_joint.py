@@ -51,12 +51,13 @@ def main(args):
             return
 
         # Example joint targets in degrees (7 DOF per arm)
-        target_angles_deg = [20, 20, 20, 20, 20, 20, 20]
-
+        target_angles_deg = [0, 0, 0, 0, 0, 0, 0]
+        # target_angles_deg = [20, 20, 20, 20, 20, 20, 20]
+        # target_rad = [0.616657017559997, 0.40700575581314374, 0.6944474972543249, 1.4276589852454076, 0.06702219114665885, 0.2578675606902524, 1.4479943887359816]
         # Move to home first
-        print(f"Moving {args.arm} arm(s) to home position...")
-        robot.set_home(arm=args.arm, speed_deg_s=args.speed_deg_s)
-        time.sleep(1)
+        # print(f"Moving {args.arm} arm(s) to home position...")
+        # robot.set_home(arm=args.arm, speed_deg_s=args.speed_deg_s)
+        # time.sleep(1)
 
         # Move to target joint angles
         print(f"Moving {args.arm} arm(s) to target joint angles...")
@@ -73,11 +74,12 @@ def main(args):
             target_joints=target_joints,
             gripper_value=gripper_value,
             arm=args.arm,
+            # joint_format="rad",
             joint_format="deg",
             speed_deg_s=args.speed_deg_s,
             wait_for_completion=True,
         )
-        time.sleep(1)
+        time.sleep(4)
 
         # Return to home
         # print(f"Returning {args.arm} arm(s) to home position...")
@@ -99,8 +101,8 @@ if __name__ == '__main__':
     
     # Robot configuration
     parser.add_argument('--port', type=str, default="", help="串口端口 (例如: /dev/ttyUSB0 或 COM3)")
-    parser.add_argument('--robot_version', type=str, default="v1_0",  help="机械臂版本 (默认: v1_0)")
-    parser.add_argument('--arm', type=str, default="both", choices=["left", "right", "both"], help="机械臂 (默认: both)")
-    parser.add_argument('--speed_deg_s', type=float, default=10.0,  help="运动速度 (度/秒, 默认: 20.0)")
+    parser.add_argument('--robot_version', type=str, default="v1_1",  help="机械臂版本 (默认: v1_1)")
+    parser.add_argument('--arm', type=str, default="right", choices=["left", "right", "both"], help="机械臂 (默认: both)")
+    parser.add_argument('--speed_deg_s', type=float, default=20.0,  help="运动速度 (度/秒, 默认: 20.0)")
     args = parser.parse_args()
     main(args)

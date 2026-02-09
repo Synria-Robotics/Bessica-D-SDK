@@ -236,6 +236,7 @@ class SynriaBessicaRobotAPI:
                     target_joints = [[a * convert for a in target_joints[0]], 
                                     [a * convert for a in target_joints[1]]]
             elif arm in ("left", "right"):
+                # print(f"target_joints: {target_joints}")
                 if not isinstance(target_joints, list) or len(target_joints) != 7:
                     logger.error(f"set_robot_state: 单臂模式必须提供7个关节角度，但得到 {len(target_joints) if isinstance(target_joints, list) else '非列表'}")
                     return False

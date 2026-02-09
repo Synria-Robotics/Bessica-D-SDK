@@ -40,17 +40,21 @@ from synria_common_sdk.idl.std_msgs.msg.dds_._String_ import String_
 class RealRobotDDSBridge:
     """Bridge between DDS commands and real robot hardware."""
     
-    def __init__(self, robot: bessica_d_sdk.SynriaBessicaRobotAPI, publish_rate: float = 100.0):
+    def __init__(self, robot: bessica_d_sdk.SynriaBessicaRobotAPI, publish_rate: float = 100.0, channel_id: int = 0, speed_deg_s: float = 20.0):
         """
         Initialize DDS bridge for real robot.
         
         Args:
             robot: SynriaBessicaRobotAPI instance (connected robot)
             publish_rate: State publishing rate in Hz (default: 100.0)
+            channel_id: DDS channel ID (0 for real robot only, 1 for simulation/both mode, default: 0)
+            speed_deg_s: Motion speed in degrees per second (default: 20.0)
         """
         self.robot = robot
         self.publish_rate = publish_rate
         self.publish_interval = 1.0 / publish_rate
+        self.channel_id = channel_id
+        self.speed_deg_s = speed_deg_s
         
         # Command subscriber
         self.cmd_subscriber = None
@@ -100,11 +104,15 @@ class RealRobotDDSBridge:
             import traceback
             traceback.print_exc()
     
-    def setup_dds(self):
-        """Setup DDS publisher and subscriber."""
-        # Initialize DDS channel 0 for real robot
-        ChannelFactoryInitialize(0)
-        logger.info("[RealRobotDDSBridge] DDS initialized (channel 0 for real robot)")
+    def setup_dds(self, channel_id: int = 0):
+        """Setup DDS publisher and subscriber.
+        
+        Args:
+            channel_id: DDS channel ID (0 for real robot only, 1 for simulation/both mode)
+        """
+        # Initialize DDS channel (default 0 for real robot, 1 for simulation/both mode)
+        ChannelFactoryInitialize(channel_id)
+        logger.info(f"[RealRobotDDSBridge] DDS initialized (channel {channel_id})")
         
         # Setup command subscriber
         self.cmd_subscriber = ChannelSubscriber(self.cmd_topic, String_)
@@ -284,6 +292,7 @@ class RealRobotDDSBridge:
                         gripper_value=[gripper_left, gripper_right] if gripper_left is not None else None,
                         arm="both",
                         joint_format="rad",
+                        speed_deg_s=self.speed_deg_s,
                         wait_for_completion=False,
                         tolerance=0.1,
                     )
@@ -314,6 +323,7 @@ class RealRobotDDSBridge:
                         gripper_value=gripper_left,
                         arm="left",
                         joint_format="rad",
+                        speed_deg_s=self.speed_deg_s,
                         wait_for_completion=False,
                         tolerance=0.1,
                     )
@@ -340,12 +350,13 @@ class RealRobotDDSBridge:
                             gripper_right = gripper_value[0]
                         elif isinstance(gripper_value, (int, float)):
                             gripper_right = gripper_value
-                    
+                    # print("cmd: ", joint_positions_cmd)
                     success = self.robot.set_robot_state(
                         target_joints=joint_positions_cmd,
                         gripper_value=gripper_right,
                         arm="right",
                         joint_format="rad",
+                        speed_deg_s=self.speed_deg_s,
                         wait_for_completion=False,
                         tolerance=0.1,
                     )
@@ -380,7 +391,7 @@ class RealRobotDDSBridge:
             logger.warning("[RealRobotDDSBridge] Already running")
             return
         
-        self.setup_dds()
+        self.setup_dds(self.channel_id)
         
         self.running = True
         
@@ -455,19 +466,10 @@ def main(args):
     # Initialize robot
     robot = bessica_d_sdk.create_robot(
         port=args.port,
-        robot_version=args.robot_version,
-        speed_deg_s=args.speed_deg_s
+        robot_version=args.robot_version
     )
     
     try:
-        # Connect to robot
-        logger.info("Connecting to robot...")
-        if not robot.connect():
-            logger.error("✗ Connection failed, please check serial port settings")
-            return
-        
-        logger.info("✓ Robot connected")
-        
         # Move to home position
         logger.info("Moving to home position...")
         robot.set_home(arm="both")
@@ -475,7 +477,7 @@ def main(args):
         logger.info("✓ Robot at home position")
         
         # Create and start DDS bridge
-        bridge = RealRobotDDSBridge(robot, publish_rate=args.publish_rate)
+        bridge = RealRobotDDSBridge(robot, publish_rate=args.publish_rate, channel_id=args.channel_id, speed_deg_s=args.speed_deg_s)
         bridge.start()
         
         # Run main loop
@@ -499,9 +501,11 @@ if __name__ == '__main__':
     # Robot configuration
     parser.add_argument('--port', type=str, default="", help="Serial port (e.g., /dev/ttyUSB0 or COM3)")
     parser.add_argument('--robot_version', type=str, default="v1_1", help="Robot version (default: v1_1)")
-    parser.add_argument('--speed_deg_s', type=float, default=40.0, help="Motion speed (deg/s, default: 40.0)")    
+    parser.add_argument('--speed_deg_s', type=float, default=5.0, help="Motion speed (deg/s, default: 40.0)")    
     # DDS configuration
-    parser.add_argument('--publish_rate', type=float, default=100.0, help="State publishing rate in Hz (default: 100.0)")
+    parser.add_argument('--publish_rate', type=float, default=30.0, help="State publishing rate in Hz (default: 100.0)")
+    parser.add_argument('--channel_id', type=int, default=0, choices=[0, 1], 
+                        help="DDS channel ID: 0 for real robot only, 1 for simulation/both mode (default: 0)")
     
     args = parser.parse_args()
     

@@ -229,7 +229,7 @@ if __name__ == "__main__":
                         help='Random seed for reproducibility (default: None)')
     parser.add_argument('--backend', type=str, default='numpy', choices=['numpy', 'torch'],
                         help='Backend to use for computation (default: numpy, ignored - both are tested)')
-    parser.add_argument('--speed-deg-s', type=float, default=10.0,
+    parser.add_argument('--speed-deg-s', type=float, default=20.0,
                         help='Joint motion speed in degrees per second (default: 10.0, range: 5-400)')
     parser.add_argument('--execute', action='store_true', help='执行移动到求解的位置')
     args = parser.parse_args()

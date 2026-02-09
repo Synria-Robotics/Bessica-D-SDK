@@ -244,7 +244,15 @@ class ServoDriver:
                         # No more frames available, break inner loop
                         break
                     
-                    if frame != 9999999:
+                    # Handle severe communication error (like Alicia version)
+                    if frame == 9999999:
+                        try:
+                            logger.error("严重串口通信错误检测到，机械臂可能已断开连接")
+                        except Exception:
+                            pass  # Logger raises exception, but we want to continue to break
+                        break
+                    
+                    if frame:
                         self.data_parser.parse_frame(frame)
                         frames_read += 1
                 
@@ -253,8 +261,14 @@ class ServoDriver:
                 if frames_read == 0:
                     time.sleep(self.read_interval)
             except Exception as e:
-                logger.error(f"状态线程异常：{e}")
-                break
+                # Log error but continue loop for resilience (improved from breaking)
+                try:
+                    logger.error(f"状态线程异常：{str(e)}")
+                except Exception:
+                    # Logger raises exception, but we want to continue the loop
+                    pass
+                # Sleep briefly before retrying to avoid rapid error loops
+                time.sleep(self.read_interval)
         self._thread_running = False
 
 
