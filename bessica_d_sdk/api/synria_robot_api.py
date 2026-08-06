@@ -58,7 +58,7 @@ class SynriaBessicaRobotAPI:
         self,
         servo_driver: ServoDriver,
         speed_deg_s: float = 20.0,
-        robot_version: str = "v1_0",
+        robot_version: str = "v1_1",
         variant: str = "skeleton",
         left_base_link: str = 'base_link',
         left_end_link: str = 'left_arm_link7',
@@ -80,7 +80,7 @@ class SynriaBessicaRobotAPI:
         self.servo_driver = servo_driver
         self.data_parser = servo_driver.data_parser  # Direct access to data parser
 
-        model_path = str(get_model_path("Bessica_D", version=robot_version, variant=variant))
+        model_path = str(get_model_path("Bessica_D", version="v1_1", variant="covered"))
 
         self.robot_model = BimanualRobotModel(
             model_path, 
